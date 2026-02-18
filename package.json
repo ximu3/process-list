@@ -98,8 +98,5 @@
     "trailingComma": "all",
     "singleQuote": true,
     "arrowParens": "always"
-  },
-  "dependencies": {
-    "@ximu3/process-list": "file:ximu3-process-list-0.1.0.tgz"
   }
 }

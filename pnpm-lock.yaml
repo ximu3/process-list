@@ -7,10 +7,6 @@ settings:
 importers:
 
   .:
-    dependencies:
-      '@ximu3/process-list':
-        specifier: file:ximu3-process-list-0.1.0.tgz
-        version: file:ximu3-process-list-0.1.0.tgz
     devDependencies:
       '@emnapi/core':
         specifier: ^1.5.0
@@ -843,11 +839,6 @@ packages:
     resolution: {integrity: sha512-6lLqMNX3TuycBPABycx7A9F1bHQR7kiQln6abjFbPrf5C/05qHM9M5E4PeTE59c7z8g6vHnx1Ioihb2AQl7BTA==}
     engines: {node: '>=18'}
     hasBin: true
-
-  '@ximu3/process-list@file:ximu3-process-list-0.1.0.tgz':
-    resolution: {integrity: sha512-r/sLokNkxaYjV0NuzO2bX0VZv7oqNQEIpA++blrCThRRJf6r44/QES4314w+tkcogQhZ9FPC+nb0Lk+nLcetpg==, tarball: file:ximu3-process-list-0.1.0.tgz}
-    version: 0.1.0
-    engines: {node: '>= 14'}
 
   abbrev@3.0.1:
     resolution: {integrity: sha512-AO2ac6pjRB3SJmGJo+v5/aK6Omggp6fsLrs6wN9bd35ulu4cCwaAU9+7ZhXjeqHVkaHThLuzH0nZr0YpCDhygg==}
@@ -2279,8 +2270,6 @@ snapshots:
       - encoding
       - rollup
       - supports-color
-
-  '@ximu3/process-list@file:ximu3-process-list-0.1.0.tgz': {}
 
   abbrev@3.0.1: {}
 
