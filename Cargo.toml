@@ -4,7 +4,7 @@ description = "A lightweight cross-platform library for getting process informat
 edition     = "2021"
 license     = "MIT"
 name        = "process_list"
-version     = "0.0.1"
+version     = "0.0.2"
 
 [lib]
 crate-type = ["cdylib"]

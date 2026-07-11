@@ -1,6 +1,6 @@
 {
   "name": "@ximu3/process-list",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "A lightweight Windows library for getting process information",
   "type": "module",
   "main": "./index.js",
