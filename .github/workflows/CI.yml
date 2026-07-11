@@ -1,405 +1,159 @@
 name: CI
 
-env:
-  DEBUG: napi:*
-  APP_NAME: process-list
-  NODE_VERSION: '24'
-  PNPM_VERSION: 11.2.2
-  CARGO_INCREMENTAL: '1'
-
 'on':
   push:
-    branches:
-      - main
-    tags-ignore:
-      - '**'
+    branches: [main]
     paths-ignore:
-      - README.md
+      - '**/*.md'
       - LICENSE
-      - '**/*.gitignore'
-      - .editorconfig
       - docs/**
-  pull_request: null
+  pull_request:
+    branches: [main]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
+env:
+  APP_NAME: process-list
+  CARGO_INCREMENTAL: '1'
+  DEBUG: napi:*
+  NODE_VERSION: '24'
+  PNPM_VERSION: '11.2.2'
+  RUST_TARGET: x86_64-pc-windows-msvc
+
 jobs:
-  detect-release:
-    name: Detect Release
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    outputs:
-      should_release: ${{ steps.parse.outputs.should_release }}
-      version: ${{ steps.parse.outputs.version }}
-      tag: ${{ steps.parse.outputs.tag }}
-      release_name: ${{ steps.parse.outputs.release_name }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 2
-
-      - name: Parse commit message
-        id: parse
-        shell: bash
-        run: |
-          COMMIT_MSG="$(git log -1 --pretty=%B)"
-          FIRST_LINE="$(echo "$COMMIT_MSG" | head -n 1)"
-
-          if [[ "$FIRST_LINE" =~ ^release:\ v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]]; then
-            VERSION="${BASH_REMATCH[1]}"
-            TAG="v$VERSION"
-            PACKAGE_NAME="$(node -p "require('./package.json').name")"
-            RELEASE_NAME="$PACKAGE_NAME v$VERSION"
-
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
-            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-            echo "release_name=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
-            echo "Detected release: $TAG"
-          else
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-            echo "No release commit detected"
-          fi
-
-  validate-release:
-    name: Validate Release Metadata
-    needs:
-      - detect-release
-    if: needs.detect-release.outputs.should_release == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Validate package version
-        shell: bash
-        run: |
-          VERSION="${{ needs.detect-release.outputs.version }}"
-          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
-
-          if [ "$PACKAGE_VERSION" != "$VERSION" ]; then
-            echo "package.json version is $PACKAGE_VERSION, but release commit targets $VERSION."
-            exit 1
-          fi
-
-          echo "Verified package version $VERSION."
-
-      - name: Validate changelog files
-        shell: bash
-        run: |
-          VERSION="${{ needs.detect-release.outputs.version }}"
-          CHANGELOG_FILE="changelog/v$VERSION/en.md"
-
-          if [[ ! -f "$CHANGELOG_FILE" ]]; then
-            echo "Missing required changelog file for v$VERSION:"
-            echo "  - $CHANGELOG_FILE"
-            exit 1
-          fi
-
-          if [[ ! -s "$CHANGELOG_FILE" ]]; then
-            echo "Empty changelog file is not allowed for v$VERSION:"
-            echo "  - $CHANGELOG_FILE"
-            exit 1
-          fi
-
-          echo "Verified changelog file for v$VERSION."
-
-  lint:
-    name: Lint
+  check:
+    name: Lint & Typecheck
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
           version: ${{ env.PNPM_VERSION }}
-          run_install: false
 
-      - name: Setup node
-        uses: actions/setup-node@v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           components: clippy, rustfmt
-          targets: x86_64-pc-windows-msvc
+          targets: ${{ env.RUST_TARGET }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Oxlint
+      - name: Lint JavaScript and TypeScript
         run: pnpm lint
 
-      - name: Cargo fmt
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Check Rust formatting
         run: cargo fmt -- --check
 
-      - name: Clippy
-        run: cargo clippy --target x86_64-pc-windows-msvc
+      - name: Run Clippy
+        run: cargo clippy --target ${{ env.RUST_TARGET }} -- -D warnings
 
   build:
-    name: Build windows-x64
-    needs:
-      - lint
+    name: Build Windows x64 Package
+    needs: check
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
           version: ${{ env.PNPM_VERSION }}
-          run_install: false
 
-      - name: Setup node
-        uses: actions/setup-node@v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: stable
-          targets: x86_64-pc-windows-msvc
-
-      - name: Cache cargo
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            ~/.napi-rs
-            .cargo-cache
-            target/
-          key: x86_64-pc-windows-msvc-cargo-windows-latest
+          targets: ${{ env.RUST_TARGET }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build
-        run: pnpm build --target x86_64-pc-windows-msvc
+      - name: Build ESM binding
+        run: pnpm build
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
+      - name: Verify package entry points
+        run: >-
+          pnpm exec tsx .github/scripts/verify-files.ts
+          index.js index.d.ts
+          ${{ env.APP_NAME }}.win32-x64-msvc.node
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: bindings-x86_64-pc-windows-msvc
+          name: package-windows-x64
           path: |
-            ${{ env.APP_NAME }}.*.node
-            ${{ env.APP_NAME }}.*.wasm
+            index.js
+            index.d.ts
+            ${{ env.APP_NAME }}.win32-x64-msvc.node
           if-no-files-found: error
+          overwrite: true
 
-  test-windows-binding:
-    name: Test windows binding - node@${{ matrix.node }}
-    needs:
-      - build
+  test:
+    name: Test Windows Binding (Node.js ${{ matrix.node }})
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        node:
-          - '20'
-          - '22'
-          - '24'
-    runs-on: windows-latest
+        node: ['20', '22', '24']
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
           version: ${{ env.PNPM_VERSION }}
-          run_install: false
 
-      - name: Setup node for dependency install
-        uses: actions/setup-node@v6
+      - name: Set up Node.js for dependency installation
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
           architecture: x64
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Setup node for runtime test
-        uses: actions/setup-node@v6
+      - name: Set up test Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: ${{ matrix.node }}
           architecture: x64
 
-      - name: Download artifact
-        uses: actions/download-artifact@v8
+      - name: Download package artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: bindings-x86_64-pc-windows-msvc
+          name: package-windows-x64
           path: .
 
-      - name: List packages
-        run: Get-ChildItem -Recurse
-
-      - name: Test bindings
+      - name: Test native API
         run: npm test
 
-  publish:
-    name: Publish npm Package
-    needs:
-      - detect-release
-      - validate-release
-      - test-windows-binding
-    if: needs.detect-release.outputs.should_release == 'true'
-    runs-on: windows-latest
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
-          run_install: false
-
-      - name: Setup node
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-          registry-url: https://registry.npmjs.org
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Create package dirs
-        run: pnpm exec napi create-npm-dirs
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v8
-        with:
-          path: artifacts
-
-      - name: Move artifacts
-        run: pnpm run artifacts
-
-      - name: List packages
-        run: ls -R ./npm
-        shell: bash
-
-      - name: Publish
-        run: npm publish --access public
-        shell: bash
-
-  publish-github-release:
-    name: Publish GitHub Release
-    needs:
-      - detect-release
-      - validate-release
-      - publish
-    if: >-
-      always() &&
-      needs.detect-release.outputs.should_release == 'true' &&
-      needs.validate-release.result == 'success' &&
-      needs.publish.result == 'success'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Download release artifacts
-        uses: actions/download-artifact@v8
-        with:
-          path: artifacts
-          pattern: bindings-*
-          merge-multiple: true
-
-      - name: Find previous release tag
-        id: previous_tag
-        shell: bash
-        run: |
-          TAG="${{ needs.detect-release.outputs.tag }}"
-          PREVIOUS_TAG="$(git tag --list 'v*' --sort=-v:refname | grep -F -x -v "$TAG" | head -n 1 || true)"
-          echo "tag=$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
-
-          if [ -n "$PREVIOUS_TAG" ]; then
-            echo "Found previous release tag: $PREVIOUS_TAG"
-          else
-            echo "No previous release tag found"
-          fi
-
-      - name: Build release body
-        shell: bash
-        env:
-          PREVIOUS_TAG: ${{ steps.previous_tag.outputs.tag }}
-          RELEASE_VERSION: ${{ needs.detect-release.outputs.version }}
-          RELEASE_TAG: ${{ needs.detect-release.outputs.tag }}
-        run: |
-          REPO_URL="https://github.com/${{ github.repository }}"
-          CHANGELOG_BASE="$REPO_URL/blob/$RELEASE_TAG/changelog/v$RELEASE_VERSION"
-          PACKAGE_NAME="$(node -p "require('./package.json').name")"
-
-          {
-            echo "## Changelog"
-            echo
-            echo "- [English]($CHANGELOG_BASE/en.md)"
-            echo
-            echo "## Package"
-            echo
-            echo "- npm: [$PACKAGE_NAME](https://www.npmjs.com/package/$PACKAGE_NAME/v/$RELEASE_VERSION)"
-            echo
-            echo "## Assets"
-            echo
-            echo "- Windows x64 native binding is attached to this release."
-            echo
-
-            if [ -n "$PREVIOUS_TAG" ]; then
-              printf '**Full Changelog**: [`%s...%s`](%s/compare/%s...%s)\n' \
-                "$PREVIOUS_TAG" "$RELEASE_TAG" "$REPO_URL" "$PREVIOUS_TAG" "$RELEASE_TAG"
-            else
-              printf '**Full Changelog**: [`View commits for %s`](%s/commits/%s)\n' \
-                "$RELEASE_TAG" "$REPO_URL" "$RELEASE_TAG"
-            fi
-          } > release-body.md
-
-      - name: Create Git tag
-        shell: bash
-        run: |
-          RELEASE_TAG="${{ needs.detect-release.outputs.tag }}"
-          HEAD_SHA="$(git rev-parse HEAD)"
-          git fetch --tags --force
-
-          if git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null; then
-            TAG_SHA="$(git rev-list -n 1 "${RELEASE_TAG}")"
-            if [ "$TAG_SHA" != "$HEAD_SHA" ]; then
-              echo "Tag ${RELEASE_TAG} already exists on ${TAG_SHA}, but HEAD is ${HEAD_SHA}. Aborting release."
-              exit 1
-            fi
-            echo "Tag ${RELEASE_TAG} already exists on HEAD, skipping tag creation"
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag "${RELEASE_TAG}"
-            git push origin "${RELEASE_TAG}"
-          fi
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ needs.detect-release.outputs.tag }}
-          name: ${{ needs.detect-release.outputs.release_name }}
-          body_path: release-body.md
-          files: |
-            artifacts/${{ env.APP_NAME }}.*.node
-            artifacts/${{ env.APP_NAME }}.*.wasm
-          fail_on_unmatched_files: false
-          draft: false
-          prerelease: ${{ contains(needs.detect-release.outputs.version, '-') }}
+      - name: Test ESM exports
+        run: npm run test:esm

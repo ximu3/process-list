@@ -2,8 +2,16 @@
   "name": "@ximu3/process-list",
   "version": "0.0.1",
   "description": "A lightweight Windows library for getting process information",
-  "main": "index.js",
-  "types": "index.d.ts",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "repository": {
     "type": "git",
     "url": "git+ssh://git@github.com/ximu3/process-list.git"
@@ -38,18 +46,20 @@
   },
   "scripts": {
     "artifacts": "napi artifacts",
-    "build": "napi build --platform --release",
-    "build:debug": "napi build --platform",
+    "build": "napi build --platform --release --esm --js index.js",
+    "build:debug": "napi build --platform --esm --js index.js",
     "format": "run-p format:prettier format:rs format:toml",
     "format:prettier": "prettier . -w",
     "format:toml": "taplo format",
     "format:rs": "cargo fmt",
     "lint": "oxlint . --ignore-path .eslintignore",
-    "prepublishOnly": "napi prepublish -t npm",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "prepublishOnly": "napi prepublish -t npm --no-gh-release",
     "test": "ava",
-    "preversion": "napi build --platform && git add .",
-    "version": "napi version",
-    "prepare": "husky"
+    "test:esm": "tsx scripts/verify-esm.ts",
+    "preversion": "pnpm build:debug",
+    "version": "napi version && pnpm build:debug && git add index.js index.d.ts",
+    "prepare": "lefthook install --reset-hooks-path"
   },
   "devDependencies": {
     "@emnapi/core": "^1.5.0",
@@ -58,13 +68,15 @@
     "@oxc-node/core": "^0.0.35",
     "@taplo/cli": "^0.7.0",
     "@tybys/wasm-util": "^0.10.0",
+    "@types/node": "^24.10.0",
     "ava": "^6.4.1",
     "chalk": "^5.6.2",
-    "husky": "^9.1.7",
+    "lefthook": "^2.1.10",
     "lint-staged": "^16.1.6",
     "npm-run-all2": "^8.0.4",
     "oxlint": "^1.14.0",
     "prettier": "^3.6.2",
+    "tsx": "^4.23.0",
     "typescript": "^5.9.2"
   },
   "lint-staged": {
@@ -85,7 +97,7 @@
     "timeout": "2m",
     "workerThreads": false,
     "environmentVariables": {
-      "OXC_TSCONFIG_PATH": "./test/tsconfig.json"
+      "OXC_TSCONFIG_PATH": "./tsconfig.json"
     },
     "nodeArguments": [
       "--import",

@@ -2,13 +2,15 @@
   "compilerOptions": {
     "target": "ESNext",
     "strict": true,
-    "moduleResolution": "node",
-    "module": "CommonJS",
+    "moduleResolution": "Bundler",
+    "module": "ESNext",
     "noUnusedLocals": true,
     "noUnusedParameters": true,
+    "noEmit": true,
     "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    "types": ["node"]
   },
-  "include": ["."],
-  "exclude": ["node_modules", "__test__"]
+  "include": ["index.d.ts", "scripts/**/*.ts", "test/**/*.ts", ".github/scripts/**/*.ts"],
+  "exclude": ["node_modules"]
 }

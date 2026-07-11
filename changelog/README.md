@@ -1,7 +1,8 @@
 # Changelog
 
-Release commits use the subject `release: vX.Y.Z`.
+Releases are published by pushing a `vX.Y.Z` tag.
 
-Each release must include a non-empty English changelog file:
+Before creating the tag, update the versions in `package.json` and `Cargo.toml`
+and add a non-empty English changelog file:
 
 - `changelog/vX.Y.Z/en.md`

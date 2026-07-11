@@ -9,6 +9,7 @@ A lightweight, high-performance Node.js library for retrieving system process in
 - **Windows Support**: Windows is the only officially supported platform at this stage.
 - **Background & Foreground**: Detect background and foreground processes.
 - **TypeScript**: First-class TypeScript support with generated definitions.
+- **ESM Only**: A native ES module entry point with named exports.
 
 ## Installation
 
