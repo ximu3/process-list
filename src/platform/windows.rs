@@ -1,233 +1,201 @@
-//! Windows-specific process enumeration
-
-use crate::process::ProcessInfo;
-use std::ffi::OsString;
-use std::mem;
-use std::os::windows::ffi::OsStringExt;
-use windows::core::PWSTR;
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, MAX_PATH};
-use windows::Win32::System::Diagnostics::ToolHelp::{
-  CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+use super::foreground_query::{Observation, retry};
+use crate::{Foreground, Process};
+use std::{io, mem::size_of};
+use windows::Win32::Foundation::{
+    CloseHandle, ERROR_INSUFFICIENT_BUFFER, ERROR_INVALID_WINDOW_HANDLE, ERROR_NO_MORE_FILES,
+    ERROR_SUCCESS, FILETIME, GetLastError, HANDLE, SetLastError,
 };
-use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
+};
+use windows::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
 use windows::Win32::System::Threading::{
-  GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
-  PROCESS_QUERY_LIMITED_INFORMATION,
+    GetProcessTimes, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    QueryFullProcessImageNameW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+use windows::core::{HRESULT, PWSTR};
 
-/// Get the PID of the foreground window process
-fn get_foreground_pid() -> Option<u32> {
-  unsafe {
-    let hwnd: HWND = GetForegroundWindow();
-    if hwnd.0.is_null() {
-      return None;
+struct OwnedHandle(HANDLE);
+
+impl Drop for OwnedHandle {
+    fn drop(&mut self) {
+        // SAFETY: This wrapper owns a successful API result and closes it exactly once.
+        unsafe {
+            let _ = CloseHandle(self.0);
+        }
     }
-    let mut pid: u32 = 0;
-    GetWindowThreadProcessId(hwnd, Some(&mut pid));
-    if pid != 0 {
-      Some(pid)
-    } else {
-      None
+}
+
+fn io_error(error: windows::core::Error) -> io::Error {
+    io::Error::from_raw_os_error(error.code().0 & 0xffff)
+}
+
+pub fn list_processes(pids: Option<&[u32]>) -> io::Result<Vec<Process>> {
+    if pids.is_some_and(<[u32]>::is_empty) {
+        return Ok(Vec::new());
     }
-  }
-}
-
-/// Get the full path of a process
-fn get_path(pid: u32) -> Option<String> {
-  unsafe {
-    let handle: HANDLE = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-    let mut buffer = [0u16; MAX_PATH as usize];
-    let mut size = buffer.len() as u32;
-
-    let result = QueryFullProcessImageNameW(
-      handle,
-      PROCESS_NAME_WIN32,
-      PWSTR(buffer.as_mut_ptr()),
-      &mut size,
-    );
-    let _ = CloseHandle(handle);
-
-    if result.is_ok() {
-      let path = OsString::from_wide(&buffer[..size as usize]);
-      Some(path.to_string_lossy().into_owned())
-    } else {
-      None
-    }
-  }
-}
-
-/// Get memory usage of a process (Working Set Size in bytes)
-fn get_memory(pid: u32) -> Option<u64> {
-  unsafe {
-    let handle: HANDLE = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-    let mut pmc: PROCESS_MEMORY_COUNTERS = mem::zeroed();
-    pmc.cb = mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
-
-    let result = GetProcessMemoryInfo(
-      handle,
-      &mut pmc,
-      mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
-    );
-    let _ = CloseHandle(handle);
-
-    if result.is_ok() {
-      Some(pmc.WorkingSetSize as u64)
-    } else {
-      None
-    }
-  }
-}
-
-/// Get process start time as Unix timestamp in milliseconds
-fn get_start_time(pid: u32) -> Option<f64> {
-  use windows::Win32::Foundation::FILETIME;
-
-  unsafe {
-    let handle: HANDLE = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-    let mut creation_time: FILETIME = mem::zeroed();
-    let mut exit_time: FILETIME = mem::zeroed();
-    let mut kernel_time: FILETIME = mem::zeroed();
-    let mut user_time: FILETIME = mem::zeroed();
-
-    let result = GetProcessTimes(
-      handle,
-      &mut creation_time,
-      &mut exit_time,
-      &mut kernel_time,
-      &mut user_time,
-    );
-    let _ = CloseHandle(handle);
-
-    if result.is_ok() {
-      // Convert FILETIME to Unix timestamp
-      // FILETIME is 100-nanosecond intervals since January 1, 1601
-      // Unix epoch is January 1, 1970
-      let filetime_value =
-        ((creation_time.dwHighDateTime as u64) << 32) | (creation_time.dwLowDateTime as u64);
-      // 116444736000000000 is the number of 100-nanosecond intervals between 1601 and 1970
-      let unix_time_100ns = filetime_value.checked_sub(116444736000000000)?;
-      // Convert to milliseconds
-      Some((unix_time_100ns / 10000) as f64)
-    } else {
-      None
-    }
-  }
-}
-
-/// Get the parent process ID
-fn get_ppid(entry: &PROCESSENTRY32W) -> u32 {
-  entry.th32ParentProcessID
-}
-
-/// Convert process name from wide string
-fn get_name(entry: &PROCESSENTRY32W) -> String {
-  let name_slice: &[u16] = &entry.szExeFile;
-  let len = name_slice
-    .iter()
-    .position(|&c| c == 0)
-    .unwrap_or(name_slice.len());
-  OsString::from_wide(&name_slice[..len])
-    .to_string_lossy()
-    .into_owned()
-}
-
-/// Get all running processes
-pub fn get_processes(
-  include_ppid: bool,
-  include_memory: bool,
-  include_start_time: bool,
-) -> Vec<ProcessInfo> {
-  let mut processes = Vec::new();
-  let foreground_pid = get_foreground_pid();
-
-  unsafe {
-    let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
-      Ok(h) => h,
-      Err(_) => return processes,
+    // SAFETY: Flags request a process snapshot; the returned handle is owned below.
+    let snapshot =
+        OwnedHandle(unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }.map_err(io_error)?);
+    let mut entry = PROCESSENTRY32W {
+        dwSize: size_of::<PROCESSENTRY32W>() as u32,
+        ..Default::default()
     };
-
-    let mut entry: PROCESSENTRY32W = mem::zeroed();
-    entry.dwSize = mem::size_of::<PROCESSENTRY32W>() as u32;
-
-    if Process32FirstW(snapshot, &mut entry).is_ok() {
-      loop {
-        let pid = entry.th32ProcessID;
-        let name = get_name(&entry);
-
-        let mut info = ProcessInfo::new(pid, name);
-        info.path = get_path(pid);
-        info.is_foreground = foreground_pid == Some(pid);
-
-        if include_ppid {
-          info.ppid = Some(get_ppid(&entry));
+    let mut result = Vec::new();
+    // SAFETY: Snapshot is live and entry has the required size and valid writable storage.
+    let mut next = unsafe { Process32FirstW(snapshot.0, &mut entry) };
+    loop {
+        match next {
+            Ok(()) => {
+                if pids.is_none_or(|pids| pids.contains(&entry.th32ProcessID)) {
+                    result.push(read_entry(&entry));
+                }
+            }
+            Err(error) if error.code() == HRESULT::from_win32(ERROR_NO_MORE_FILES.0) => break,
+            Err(error) => return Err(io_error(error)),
         }
-        if include_memory {
-          info.memory = get_memory(pid).map(|m| m as f64);
-        }
-        if include_start_time {
-          info.start_time = get_start_time(pid);
-        }
-
-        processes.push(info);
-
-        if Process32NextW(snapshot, &mut entry).is_err() {
-          break;
-        }
-      }
+        // SAFETY: The snapshot and entry remain valid throughout iteration.
+        next = unsafe { Process32NextW(snapshot.0, &mut entry) };
     }
-
-    let _ = CloseHandle(snapshot);
-  }
-
-  processes
+    Ok(result)
 }
 
-/// Get a single process by PID
-pub fn get_process(
-  pid: u32,
-  include_ppid: bool,
-  include_memory: bool,
-  include_start_time: bool,
-) -> Option<ProcessInfo> {
-  let foreground_pid = get_foreground_pid();
+pub fn get_process(pid: u32) -> io::Result<Option<Process>> {
+    Ok(list_processes(Some(&[pid]))?.into_iter().next())
+}
 
-  unsafe {
-    let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?;
-
-    let mut entry: PROCESSENTRY32W = mem::zeroed();
-    entry.dwSize = mem::size_of::<PROCESSENTRY32W>() as u32;
-
-    if Process32FirstW(snapshot, &mut entry).is_ok() {
-      loop {
-        if entry.th32ProcessID == pid {
-          let name = get_name(&entry);
-          let mut info = ProcessInfo::new(pid, name);
-          info.path = get_path(pid);
-          info.is_foreground = foreground_pid == Some(pid);
-
-          if include_ppid {
-            info.ppid = Some(get_ppid(&entry));
-          }
-          if include_memory {
-            info.memory = get_memory(pid).map(|m| m as f64);
-          }
-          if include_start_time {
-            info.start_time = get_start_time(pid);
-          }
-
-          let _ = CloseHandle(snapshot);
-          return Some(info);
-        }
-
-        if Process32NextW(snapshot, &mut entry).is_err() {
-          break;
-        }
-      }
+fn read_entry(entry: &PROCESSENTRY32W) -> Process {
+    let mut process = Process::new(entry.th32ProcessID);
+    let length = entry
+        .szExeFile
+        .iter()
+        .position(|value| *value == 0)
+        .unwrap_or(entry.szExeFile.len());
+    process.name = (length > 0).then(|| String::from_utf16_lossy(&entry.szExeFile[..length]));
+    process.parent_pid = Some(entry.th32ParentProcessID);
+    // SAFETY: The PID comes from the snapshot. No handle inheritance or write access is requested.
+    let Ok(handle) =
+        (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process.pid) })
+    else {
+        return process;
+    };
+    let handle = OwnedHandle(handle);
+    process.executable_path = executable_path(&handle);
+    let mut counters = PROCESS_MEMORY_COUNTERS {
+        cb: size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: Counters has the size passed to the API and the process handle is live.
+    if unsafe { K32GetProcessMemoryInfo(handle.0, &mut counters, counters.cb) }.as_bool() {
+        process.memory_bytes = Some(counters.WorkingSetSize as u64);
     }
+    let (mut creation, mut exit, mut kernel, mut user) = (
+        FILETIME::default(),
+        FILETIME::default(),
+        FILETIME::default(),
+        FILETIME::default(),
+    );
+    // SAFETY: All four FILETIME output pointers refer to initialized, writable values.
+    if unsafe { GetProcessTimes(handle.0, &mut creation, &mut exit, &mut kernel, &mut user) }
+        .is_ok()
+    {
+        process.started_at = filetime_ms(creation);
+    }
+    process
+}
 
-    let _ = CloseHandle(snapshot);
-  }
+fn executable_path(handle: &OwnedHandle) -> Option<String> {
+    let mut buffer = vec![0u16; 512];
+    loop {
+        let mut length = buffer.len() as u32;
+        // SAFETY: The buffer contains length writable UTF-16 units; handle remains live.
+        match unsafe {
+            QueryFullProcessImageNameW(
+                handle.0,
+                PROCESS_NAME_WIN32,
+                PWSTR(buffer.as_mut_ptr()),
+                &mut length,
+            )
+        } {
+            Ok(()) => return Some(String::from_utf16_lossy(&buffer[..length as usize])),
+            Err(error)
+                if error.code() == HRESULT::from_win32(ERROR_INSUFFICIENT_BUFFER.0)
+                    && buffer.len() < 32768 =>
+            {
+                buffer.resize((buffer.len() * 2).min(32768), 0);
+            }
+            Err(_) => return None,
+        }
+    }
+}
 
-  None
+fn filetime_ms(time: FILETIME) -> Option<f64> {
+    let ticks = (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime);
+    ticks
+        .checked_sub(116_444_736_000_000_000)
+        .map(|ticks| ticks as f64 / 10_000.0)
+}
+
+pub fn foreground() -> io::Result<Foreground> {
+    retry(observe_foreground)
+}
+
+fn observe_foreground() -> io::Result<Observation> {
+    // SAFETY: This read-only API has no pointer arguments or ownership transfer.
+    let window = unsafe { GetForegroundWindow() };
+    if window.0.is_null() {
+        return Ok(Observation::Stable(Foreground::None { source: "win32" }));
+    }
+    let mut pid = 0;
+    // SAFETY: The API tolerates a window disappearing; pid is valid writable storage.
+    let thread = unsafe {
+        SetLastError(ERROR_SUCCESS);
+        GetWindowThreadProcessId(window, Some(&mut pid))
+    };
+    if thread == 0 {
+        // SAFETY: Read the calling thread's last error immediately after the failed query.
+        let error = unsafe { GetLastError() };
+        if error == ERROR_INVALID_WINDOW_HANDLE {
+            return Ok(Observation::Changed);
+        }
+        return Err(if error == ERROR_SUCCESS {
+            io::Error::other("GetWindowThreadProcessId failed without an error code")
+        } else {
+            io::Error::from_raw_os_error(error.0 as i32)
+        });
+    }
+    // SAFETY: This read-only call has no arguments. Detect focus moving during ownership lookup.
+    if unsafe { GetForegroundWindow() } != window {
+        return Ok(Observation::Changed);
+    }
+    if pid == 0 {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "The foreground window returned PID zero",
+        ))
+    } else {
+        Ok(Observation::Stable(Foreground::Active {
+            pid,
+            source: "win32",
+        }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_epoch_conversion_is_checked() {
+        assert_eq!(filetime_ms(FILETIME::default()), None);
+        let epoch = 116_444_736_000_000_000u64;
+        assert_eq!(
+            filetime_ms(FILETIME {
+                dwLowDateTime: epoch as u32,
+                dwHighDateTime: (epoch >> 32) as u32
+            }),
+            Some(0.0)
+        );
+    }
 }

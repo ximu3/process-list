@@ -1,162 +1,54 @@
 name: Publish
 
-'on':
+on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing release tag to publish, such as v0.1.0.'
+        description: Existing release tag, for example v0.1.0
         required: true
         type: string
+
+permissions:
+  contents: read
 
 concurrency:
   group: publish-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
-permissions:
-  contents: read
-
-env:
-  APP_NAME: process-list
-  CARGO_INCREMENTAL: '1'
-  DEBUG: napi:*
-  NODE_VERSION: '24'
-  NPM_VERSION: '11.17.0'
-  PNPM_VERSION: '11.2.2'
-  RUST_TARGET: x86_64-pc-windows-msvc
-
 jobs:
   metadata:
-    name: Validate Release Metadata
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
-      is_prerelease: ${{ steps.release.outputs.is_prerelease }}
-      make_latest: ${{ steps.release.outputs.make_latest }}
-      package_name: ${{ steps.release.outputs.package_name }}
-      release_name: ${{ steps.release.outputs.release_name }}
       tag: ${{ steps.release.outputs.tag }}
+      sha: ${{ steps.release.outputs.sha }}
       version: ${{ steps.release.outputs.version }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+      dist_tag: ${{ steps.release.outputs.dist_tag }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          fetch-depth: 0
           persist-credentials: false
-
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Validate tag, versions, and changelog
-        id: release
+          node-version: '24'
+      - id: release
         env:
           RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-        run: pnpm exec tsx .github/scripts/release/metadata.ts
+        run: node scripts/validate-release.mjs
 
-  build:
-    name: Build Windows x64 Release
+  verify:
     needs: metadata
-    runs-on: windows-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ needs.metadata.outputs.tag }}
-          persist-credentials: false
+    uses: ./.github/workflows/verify.yml
+    with:
+      ref: ${{ needs.metadata.outputs.sha }}
 
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
-        with:
-          targets: ${{ env.RUST_TARGET }}
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build ESM binding
-        run: pnpm build
-
-      - name: Upload release artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: release-windows-x64
-          path: |
-            index.js
-            index.d.ts
-            ${{ env.APP_NAME }}.win32-x64-msvc.node
-          if-no-files-found: error
-          overwrite: true
-
-  test:
-    name: Test Release (Node.js ${{ matrix.node }})
-    needs: [metadata, build]
-    runs-on: windows-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ['20', '22', '24']
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ needs.metadata.outputs.tag }}
-          persist-credentials: false
-
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - name: Set up Node.js for dependency installation
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-          architecture: x64
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Set up test Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: ${{ matrix.node }}
-          architecture: x64
-
-      - name: Download release artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: release-windows-x64
-          path: .
-
-      - name: Test native API
-        run: npm test
-
-      - name: Test ESM exports
-        run: npm run test:esm
-
-  publish-npm:
-    name: Publish To npm
-    needs: [metadata, build, test]
-    runs-on: ubuntu-latest
+  npm:
+    needs: [metadata, verify]
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -164,97 +56,48 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ needs.metadata.outputs.tag }}
+          ref: ${{ needs.metadata.outputs.sha }}
           persist-credentials: false
-
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
           package-manager-cache: false
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Install pinned npm CLI
-        run: npm install --global npm@${{ env.NPM_VERSION }}
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Create platform package
-        run: pnpm exec napi create-npm-dirs
-
-      - name: Download release artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - run: npm install --global npm@11.17.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: release-windows-x64
+          pattern: native-*
           path: artifacts
-
-      - name: Assemble npm packages
-        run: pnpm artifacts
-
-      - name: Verify package entry points
-        run: >-
-          pnpm exec tsx .github/scripts/verify-files.ts
-          index.js index.d.ts
-          ${{ env.APP_NAME }}.win32-x64-msvc.node
-
-      - name: Publish packages
+          merge-multiple: true
+      - run: node scripts/assemble.mjs
+      - name: Publish native packages, then the main package
         env:
-          NPM_CONFIG_PROVENANCE: 'true'
-        run: npm publish --access public
+          NPM_DIST_TAG: ${{ needs.metadata.outputs.dist_tag }}
+        run: node scripts/publish.mjs
 
-  publish-github-release:
-    name: Publish GitHub Release
-    needs: [metadata, build, publish-npm]
-    runs-on: ubuntu-latest
+  release:
+    needs: [metadata, npm]
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ needs.metadata.outputs.tag }}
-          fetch-depth: 0
+          ref: ${{ needs.metadata.outputs.sha }}
           persist-credentials: false
-
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Download release artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: release-windows-x64
+          pattern: native-*
           path: artifacts
-
-      - name: Build release body
-        env:
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          PACKAGE_NAME: ${{ needs.metadata.outputs.package_name }}
-          RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
-          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
-        run: pnpm exec tsx .github/scripts/release/body.ts
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3
+          merge-multiple: true
+      - uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3
         with:
           tag_name: ${{ needs.metadata.outputs.tag }}
-          name: ${{ needs.metadata.outputs.release_name }}
-          body_path: release-body.md
-          files: artifacts/${{ env.APP_NAME }}.win32-x64-msvc.node
+          name: ${{ needs.metadata.outputs.tag }}
+          body_path: changelog/v${{ needs.metadata.outputs.version }}/en.md
+          files: artifacts/*.node
           fail_on_unmatched_files: true
-          overwrite_files: true
-          draft: false
-          prerelease: ${{ fromJSON(needs.metadata.outputs.is_prerelease) }}
-          make_latest: ${{ fromJSON(needs.metadata.outputs.make_latest) }}
+          overwrite_files: false
+          prerelease: ${{ fromJSON(needs.metadata.outputs.prerelease) }}
+          make_latest: ${{ needs.metadata.outputs.prerelease == 'true' && 'false' || 'true' }}

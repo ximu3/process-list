@@ -1,8 +1,9 @@
 target
-.pnpm-store
+node_modules
+npm
+artifacts
+.tools
+tmp
 pnpm-lock.yaml
-index.js
-package-template.wasi-browser.js
-package-template.wasi.cjs
-wasi-worker-browser.mjs
-wasi-worker.mjs
+native/binding.d.ts
+.husky/_

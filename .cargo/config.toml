@@ -1,2 +1,9 @@
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# A Node.js addon is a shared library, including on musl.
+[target.'cfg(all(target_os = "linux", target_env = "musl"))']
+rustflags = ["-C", "target-feature=-crt-static"]

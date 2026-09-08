@@ -1,45 +1,55 @@
-//! Cross-platform process list library
-//!
-//! A lightweight library for getting system process information.
+//! Read-only process queries and foreground application identity.
 
-#![deny(clippy::all)]
+#![deny(unsafe_op_in_unsafe_fn)]
 
+#[cfg(all(feature = "node", not(test)))]
+mod binding;
+mod model;
 mod platform;
-mod process;
 
-use napi_derive::napi;
-use process::ProcessInfo;
+pub use model::{Foreground, Process};
+use std::io;
 
-/// Options for controlling which optional fields to include
-#[napi(object)]
-#[derive(Default)]
-pub struct GetProcessesOptions {
-  /// Optional fields to include: "ppid", "memory", "startTime"
-  pub include: Option<Vec<String>>,
+/// Collect visible processes without querying the desktop session.
+pub fn list_processes(pids: Option<&[u32]>) -> io::Result<Vec<Process>> {
+    let mut processes = platform::list_processes(pids)?;
+    processes.sort_unstable_by_key(|process| process.pid);
+    processes.dedup_by_key(|process| process.pid);
+    Ok(processes)
 }
 
-/// Get all running processes
-#[napi]
-pub fn get_processes(options: Option<GetProcessesOptions>) -> Vec<ProcessInfo> {
-  let opts = options.unwrap_or_default();
-  let include_fields = opts.include.unwrap_or_default();
-
-  let include_ppid = include_fields.iter().any(|f| f == "ppid");
-  let include_memory = include_fields.iter().any(|f| f == "memory");
-  let include_start_time = include_fields.iter().any(|f| f == "startTime");
-
-  platform::get_processes(include_ppid, include_memory, include_start_time)
+pub fn get_process(pid: u32) -> io::Result<Option<Process>> {
+    platform::get_process(pid)
 }
 
-/// Get a single process by PID
-#[napi]
-pub fn get_process(pid: u32, options: Option<GetProcessesOptions>) -> Option<ProcessInfo> {
-  let opts = options.unwrap_or_default();
-  let include_fields = opts.include.unwrap_or_default();
+pub fn get_foreground() -> io::Result<Foreground> {
+    platform::foreground()
+}
 
-  let include_ppid = include_fields.iter().any(|f| f == "ppid");
-  let include_memory = include_fields.iter().any(|f| f == "memory");
-  let include_start_time = include_fields.iter().any(|f| f == "startTime");
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-  platform::get_process(pid, include_ppid, include_memory, include_start_time)
+    #[test]
+    fn self_process_has_real_details() {
+        let process = get_process(std::process::id()).unwrap().unwrap();
+        assert_eq!(process.pid, std::process::id());
+        assert!(process.name.as_ref().is_some_and(|name| !name.is_empty()));
+        assert!(process.executable_path.is_some());
+        assert!(process.memory_bytes.is_some_and(|bytes| bytes > 0));
+        assert!(process.started_at.is_some_and(|time| time > 0.0));
+        assert!(process.parent_pid.is_some());
+    }
+
+    #[test]
+    fn lists_are_sorted_unique_and_filterable() {
+        let pid = std::process::id();
+        let processes = list_processes(Some(&[pid, pid])).unwrap();
+        assert_eq!(processes.len(), 1);
+        assert_eq!(processes[0].pid, pid);
+        assert!(list_processes(Some(&[])).unwrap().is_empty());
+        let processes = list_processes(None).unwrap();
+        assert!(processes.iter().any(|process| process.pid == pid));
+        assert!(processes.windows(2).all(|pair| pair[0].pid < pair[1].pid));
+    }
 }

@@ -1,159 +1,18 @@
 name: CI
 
-'on':
+on:
   push:
     branches: [main]
-    paths-ignore:
-      - '**/*.md'
-      - LICENSE
-      - docs/**
   pull_request:
     branches: [main]
-
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
 
-env:
-  APP_NAME: process-list
-  CARGO_INCREMENTAL: '1'
-  DEBUG: napi:*
-  NODE_VERSION: '24'
-  PNPM_VERSION: '11.2.2'
-  RUST_TARGET: x86_64-pc-windows-msvc
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  check:
-    name: Lint & Typecheck
-    runs-on: windows-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
-        with:
-          components: clippy, rustfmt
-          targets: ${{ env.RUST_TARGET }}
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Lint JavaScript and TypeScript
-        run: pnpm lint
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Check Rust formatting
-        run: cargo fmt -- --check
-
-      - name: Run Clippy
-        run: cargo clippy --target ${{ env.RUST_TARGET }} -- -D warnings
-
-  build:
-    name: Build Windows x64 Package
-    needs: check
-    runs-on: windows-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
-        with:
-          targets: ${{ env.RUST_TARGET }}
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build ESM binding
-        run: pnpm build
-
-      - name: Verify package entry points
-        run: >-
-          pnpm exec tsx .github/scripts/verify-files.ts
-          index.js index.d.ts
-          ${{ env.APP_NAME }}.win32-x64-msvc.node
-
-      - name: Upload package artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: package-windows-x64
-          path: |
-            index.js
-            index.d.ts
-            ${{ env.APP_NAME }}.win32-x64-msvc.node
-          if-no-files-found: error
-          overwrite: true
-
-  test:
-    name: Test Windows Binding (Node.js ${{ matrix.node }})
-    needs: build
-    runs-on: windows-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ['20', '22', '24']
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - name: Set up Node.js for dependency installation
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-          architecture: x64
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Set up test Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: ${{ matrix.node }}
-          architecture: x64
-
-      - name: Download package artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: package-windows-x64
-          path: .
-
-      - name: Test native API
-        run: npm test
-
-      - name: Test ESM exports
-        run: npm run test:esm
+  verify:
+    uses: ./.github/workflows/verify.yml

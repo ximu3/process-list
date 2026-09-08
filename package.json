@@ -1,7 +1,8 @@
 {
   "name": "@ximu3/process-list",
-  "version": "0.0.2",
-  "description": "A lightweight Windows library for getting process information",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cross-platform process queries and foreground ownership for Node.js",
   "type": "module",
   "main": "./index.js",
   "types": "./index.d.ts",
@@ -12,100 +13,80 @@
     },
     "./package.json": "./package.json"
   },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "native/binding.js",
+    "native/binding.d.ts",
+    "native/targets.js"
+  ],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "packageManager": "pnpm@11.2.2",
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/ximu3/process-list.git"
+    "url": "https://github.com/ximu3/process-list.git"
   },
   "license": "MIT",
   "keywords": [
     "process",
-    "ps",
-    "process-list",
     "system",
     "foreground",
-    "napi-rs",
-    "rust"
+    "node-api",
+    "rust",
+    "windows",
+    "macos",
+    "linux"
   ],
-  "files": [
-    "index.d.ts",
-    "index.js"
-  ],
-  "napi": {
-    "binaryName": "process-list",
-    "targets": [
-      "x86_64-pc-windows-msvc"
-    ]
-  },
-  "engines": {
-    "node": ">= 14"
-  },
-  "packageManager": "pnpm@11.2.2",
   "publishConfig": {
     "registry": "https://registry.npmjs.org/",
     "access": "public"
   },
+  "napi": {
+    "binaryName": "process-list",
+    "targets": [
+      "x86_64-pc-windows-msvc",
+      "aarch64-pc-windows-msvc",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl",
+      "aarch64-unknown-linux-musl"
+    ]
+  },
   "scripts": {
-    "artifacts": "napi artifacts",
-    "build": "napi build --platform --release --esm --js index.js",
-    "build:debug": "napi build --platform --esm --js index.js",
-    "format": "run-p format:prettier format:rs format:toml",
-    "format:prettier": "prettier . -w",
-    "format:toml": "taplo format",
-    "format:rs": "cargo fmt",
-    "lint": "oxlint . --ignore-path .eslintignore",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "prepublishOnly": "napi prepublish -t npm --no-gh-release",
-    "test": "ava",
-    "test:esm": "tsx scripts/verify-esm.ts",
-    "preversion": "pnpm build:debug",
-    "version": "napi version && pnpm build:debug && git add index.js index.d.ts",
-    "prepare": "lefthook install --reset-hooks-path"
+    "build": "napi build --platform --release --no-js --output-dir native --dts binding.d.ts -- --locked",
+    "build:debug": "napi build --platform --no-js --output-dir native --dts binding.d.ts -- --locked",
+    "test": "node --test test/*.test.js",
+    "test:rust": "cargo test --locked --no-default-features",
+    "test:hooks": "node --test test/hooks.test.mjs",
+    "test:package": "node scripts/verify-package.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "check:format": "prettier --check",
+    "check:rust-format": "cargo fmt --check",
+    "check:rust": "cargo clippy --locked --all-targets -- -D warnings",
+    "lint": "pnpm check:format . && pnpm check:rust-format && pnpm check:rust",
+    "format": "prettier --write . && cargo fmt",
+    "check": "pnpm lint && pnpm typecheck && pnpm test:rust && pnpm test && pnpm test:package && pnpm test:hooks",
+    "verify": "pnpm build:debug && pnpm check",
+    "hooks:install": "node scripts/install-hooks.mjs",
+    "hooks:uninstall": "node scripts/uninstall-hooks.mjs",
+    "prepare": "node scripts/install-hooks.mjs",
+    "version:sync": "node scripts/version.mjs",
+    "packages:assemble": "node scripts/assemble.mjs"
   },
   "devDependencies": {
-    "@emnapi/core": "^1.5.0",
-    "@emnapi/runtime": "^1.5.0",
-    "@napi-rs/cli": "^3.2.0",
-    "@oxc-node/core": "^0.0.35",
-    "@taplo/cli": "^0.7.0",
-    "@tybys/wasm-util": "^0.10.0",
-    "@types/node": "^24.10.0",
-    "ava": "^6.4.1",
-    "chalk": "^5.6.2",
-    "lefthook": "^2.1.10",
-    "lint-staged": "^16.1.6",
-    "npm-run-all2": "^8.0.4",
-    "oxlint": "^1.14.0",
-    "prettier": "^3.6.2",
-    "tsx": "^4.23.0",
-    "typescript": "^5.9.2"
-  },
-  "lint-staged": {
-    "*.@(js|ts|tsx)": [
-      "oxlint --fix"
-    ],
-    "*.@(js|ts|tsx|yml|yaml|md|json)": [
-      "prettier --write"
-    ],
-    "*.toml": [
-      "taplo format"
-    ]
-  },
-  "ava": {
-    "extensions": {
-      "ts": "module"
-    },
-    "timeout": "2m",
-    "workerThreads": false,
-    "environmentVariables": {
-      "OXC_TSCONFIG_PATH": "./tsconfig.json"
-    },
-    "nodeArguments": [
-      "--import",
-      "@oxc-node/core/register"
-    ]
+    "@napi-rs/cli": "3.9.0",
+    "@types/node": "^22.19.0",
+    "husky": "9.1.7",
+    "lint-staged": "17.5.0",
+    "prettier": "3.9.6",
+    "typescript": "7.0.2"
   },
   "prettier": {
-    "printWidth": 120,
+    "printWidth": 110,
     "semi": false,
     "trailingComma": "all",
     "singleQuote": true,

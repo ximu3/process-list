@@ -1,0 +1,186 @@
+name: Build and verify
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: '0'
+  MACOSX_DEPLOYMENT_TARGET: '11.0'
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          version: '11.2.2'
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: '1.90.0'
+          components: rustfmt
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check:format .
+      - run: pnpm typecheck
+      - run: pnpm check:rust-format
+
+  native:
+    needs: quality
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          version: '11.2.2'
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: '1.90.0'
+          components: clippy, rustfmt
+          targets: ${{ matrix.target }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check:rust
+      - run: pnpm test:rust
+      - run: pnpm test:hooks
+      - name: Build with the Linux baseline toolchain
+        if: runner.os == 'Linux'
+        run: pnpm exec napi build --platform --release --no-js --output-dir native --dts binding.d.ts --target ${{ matrix.target }} --use-napi-cross -- --locked
+      - name: Build with the platform SDK
+        if: runner.os != 'Linux'
+        run: pnpm exec napi build --platform --release --no-js --output-dir native --dts binding.d.ts --target ${{ matrix.target }} -- --locked
+      - name: Verify generated declarations
+        run: git diff --exit-code -- native/binding.d.ts
+      - name: Exercise the X11 protocol on an isolated display
+        if: runner.os == 'Linux'
+        env:
+          PROCESS_LIST_X11_TEST: '1'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes xvfb xauth
+          xvfb-run -a cargo test --locked --no-default-features x11_window -- --ignored
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-${{ matrix.target }}
+          path: native/*.node
+          if-no-files-found: error
+
+  runtime:
+    needs: native
+    name: ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.13.0', '24', '26']
+        os: [windows-2022, windows-11-arm, macos-15-intel, macos-15, ubuntu-22.04, ubuntu-22.04-arm]
+        include:
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: native-${{ matrix.target }}
+          path: native
+      - run: npm test
+      - run: npm run test:package
+
+  musl:
+    needs: quality
+    name: Alpine / ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - name: Build and test against musl
+        run: |
+          docker run --rm -e CI=true -v "$PWD:/work" -w /work node:24-alpine sh -eu -c '
+            apk add --no-cache build-base curl
+            curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.90.0
+            export PATH="$HOME/.cargo/bin:$PATH"
+            rustup component add clippy rustfmt
+            npm install --global pnpm@11.2.2
+            pnpm install --frozen-lockfile
+            pnpm check:rust
+            pnpm test:rust
+            pnpm build
+            npm test
+            npm run test:package
+          '
+      - name: Verify the same binary on the minimum and current Node.js versions
+        run: |
+          for version in 22.13.0 26; do
+            docker run --rm -e CI=true -v "$PWD:/work" -w /work "node:$version-alpine" sh -eu -c 'npm test && npm run test:package'
+          done
+      - name: Verify generated declarations
+        run: git diff --exit-code -- native/binding.d.ts
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-${{ matrix.target }}
+          path: native/*.node
+          if-no-files-found: error

@@ -1,16 +1,24 @@
 {
   "compilerOptions": {
-    "target": "ESNext",
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "strict": true,
-    "moduleResolution": "Bundler",
-    "module": "ESNext",
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
     "noEmit": true,
-    "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
+    "allowJs": true,
+    "checkJs": true,
+    "resolveJsonModule": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
     "types": ["node"]
   },
-  "include": ["index.d.ts", "scripts/**/*.ts", "test/**/*.ts", ".github/scripts/**/*.ts"],
+  "include": [
+    "index.js",
+    "index.d.ts",
+    "native/*.js",
+    "test/types.test.ts",
+    "scripts/*.mjs",
+    "lint-staged.config.mjs"
+  ],
   "exclude": ["node_modules"]
 }

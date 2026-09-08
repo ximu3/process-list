@@ -1,260 +1,145 @@
-//! Linux-specific process enumeration
-//!
-//! NOTE:
-//! This module is currently kept as a placeholder for future Linux support.
-//! The only production-ready platform in this project is Windows.
-//! Behavior here is best-effort and not part of the supported surface yet.
+use super::procfs;
+use crate::{Foreground, Process};
+use std::{fs, io, path::Path};
 
-use crate::process::ProcessInfo;
-use std::fs;
-use std::path::Path;
+mod x11;
 
-/// Get the foreground window PID using X11
-fn get_foreground_pid() -> Option<u32> {
-  use std::ptr;
-  use x11::xlib;
-
-  unsafe {
-    // Open display
-    let display = xlib::XOpenDisplay(ptr::null());
-    if display.is_null() {
-      return None;
-    }
-
-    // Get root window of default screen
-    let root = xlib::XDefaultRootWindow(display);
-
-    // Atom for _NET_ACTIVE_WINDOW
-    let atom_name = std::ffi::CString::new("_NET_ACTIVE_WINDOW").ok()?;
-    let atom = xlib::XInternAtom(display, atom_name.as_ptr(), xlib::True);
-    if atom == xlib::None {
-      xlib::XCloseDisplay(display);
-      return None;
-    }
-
-    // Get active window property
-    let mut actual_type_return = 0;
-    let mut actual_format_return = 0;
-    let mut nitems_return = 0;
-    let mut bytes_after_return = 0;
-    let mut prop_return = ptr::null_mut();
-
-    let status = xlib::XGetWindowProperty(
-      display,
-      root,
-      atom,
-      0,
-      1,
-      xlib::False,
-      xlib::XA_WINDOW,
-      &mut actual_type_return,
-      &mut actual_format_return,
-      &mut nitems_return,
-      &mut bytes_after_return,
-      &mut prop_return,
-    );
-
-    if status != xlib::Success as i32 || prop_return.is_null() || nitems_return == 0 {
-      if !prop_return.is_null() {
-        xlib::XFree(prop_return as *mut _);
-      }
-      xlib::XCloseDisplay(display);
-      return None;
-    }
-
-    // Get window ID from property
-    let window_id = *(prop_return as *const xlib::Window);
-    xlib::XFree(prop_return as *mut _);
-
-    // Get _NET_WM_PID of that window
-    let atom_pid_name = std::ffi::CString::new("_NET_WM_PID").ok()?;
-    let atom_pid = xlib::XInternAtom(display, atom_pid_name.as_ptr(), xlib::True);
-
-    if atom_pid == xlib::None {
-      xlib::XCloseDisplay(display);
-      return None;
-    }
-
-    let status_pid = xlib::XGetWindowProperty(
-      display,
-      window_id,
-      atom_pid,
-      0,
-      1,
-      xlib::False,
-      xlib::XA_CARDINAL,
-      &mut actual_type_return,
-      &mut actual_format_return,
-      &mut nitems_return,
-      &mut bytes_after_return,
-      &mut prop_return,
-    );
-
-    let mut result = None;
-    if status_pid == xlib::Success as i32 && !prop_return.is_null() && nitems_return > 0 {
-      let pid = *(prop_return as *const u32);
-      result = Some(pid);
-    }
-
-    if !prop_return.is_null() {
-      xlib::XFree(prop_return as *mut _);
-    }
-    xlib::XCloseDisplay(display);
-
-    result
-  }
+struct Clock {
+    boot_seconds: Option<u64>,
+    ticks_per_second: Option<u64>,
+    page_size: Option<u64>,
 }
 
-/// Read process name from /proc/{pid}/comm
-fn get_name(pid: u32) -> Option<String> {
-  let path = format!("/proc/{}/comm", pid);
-  fs::read_to_string(&path).ok().map(|s| s.trim().to_string())
-}
-
-/// Read process executable path from /proc/{pid}/exe
-fn get_path(pid: u32) -> Option<String> {
-  let path = format!("/proc/{}/exe", pid);
-  fs::read_link(&path)
-    .ok()
-    .map(|p| p.to_string_lossy().into_owned())
-}
-
-/// Read parent PID from /proc/{pid}/stat
-fn get_ppid(pid: u32) -> Option<u32> {
-  let path = format!("/proc/{}/stat", pid);
-  let content = fs::read_to_string(&path).ok()?;
-
-  // Format: pid (comm) state ppid ...
-  // Find the closing paren to handle comm with spaces
-  let close_paren = content.rfind(')')?;
-  let after_comm = &content[close_paren + 2..];
-  let fields: Vec<&str> = after_comm.split_whitespace().collect();
-
-  // ppid is the second field after comm (index 1)
-  fields.get(1)?.parse().ok()
-}
-
-/// Read memory usage from /proc/{pid}/statm
-fn get_memory(pid: u32) -> Option<u64> {
-  let path = format!("/proc/{}/statm", pid);
-  let content = fs::read_to_string(&path).ok()?;
-  let fields: Vec<&str> = content.split_whitespace().collect();
-
-  // Second field is RSS in pages
-  let rss_pages: u64 = fields.get(1)?.parse().ok()?;
-  // Page size is typically 4096 bytes
-  let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) as u64 };
-  Some(rss_pages * page_size)
-}
-
-/// Read start time from /proc/{pid}/stat
-fn get_start_time(pid: u32) -> Option<f64> {
-  let path = format!("/proc/{}/stat", pid);
-  let content = fs::read_to_string(&path).ok()?;
-
-  let close_paren = content.rfind(')')?;
-  let after_comm = &content[close_paren + 2..];
-  let fields: Vec<&str> = after_comm.split_whitespace().collect();
-
-  // starttime is field 20 (0-indexed: 19) after comm
-  let start_ticks: u64 = fields.get(19)?.parse().ok()?;
-
-  // Convert from clock ticks to milliseconds
-  let ticks_per_sec = unsafe { libc::sysconf(libc::_SC_CLK_TCK) as u64 };
-  if ticks_per_sec == 0 {
-    return None;
-  }
-
-  // Get system boot time
-  let uptime_content = fs::read_to_string("/proc/uptime").ok()?;
-  let uptime_secs: f64 = uptime_content.split_whitespace().next()?.parse().ok()?;
-
-  // Calculate start time as Unix timestamp
-  let now = std::time::SystemTime::now()
-    .duration_since(std::time::UNIX_EPOCH)
-    .ok()?;
-  let boot_time = now.as_secs_f64() - uptime_secs;
-  let process_start = boot_time + (start_ticks as f64 / ticks_per_sec as f64);
-
-  Some(process_start * 1000.0) // Convert to milliseconds
-}
-
-/// Get all running processes
-pub fn get_processes(
-  include_ppid: bool,
-  include_memory: bool,
-  include_start_time: bool,
-) -> Vec<ProcessInfo> {
-  // Placeholder implementation for Linux.
-  // Keep API shape consistent with Windows while Linux support is incomplete.
-  let mut processes = Vec::new();
-  let foreground_pid = get_foreground_pid();
-
-  // Read /proc directory
-  let proc_dir = match fs::read_dir("/proc") {
-    Ok(dir) => dir,
-    Err(_) => return processes,
-  };
-
-  for entry in proc_dir.flatten() {
-    let file_name = entry.file_name();
-    let name_str = file_name.to_string_lossy();
-
-    // Only process numeric directories (PIDs)
-    if let Ok(pid) = name_str.parse::<u32>() {
-      if let Some(name) = get_name(pid) {
-        let mut info = ProcessInfo::new(pid, name);
-        info.path = get_path(pid);
-        info.is_foreground = foreground_pid == Some(pid);
-
-        if include_ppid {
-          info.ppid = get_ppid(pid);
+impl Clock {
+    fn read(root: &Path) -> Self {
+        // SAFETY: sysconf reads process-independent system configuration and has no pointer arguments.
+        let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+        // SAFETY: The page-size query has no side effects or pointer arguments.
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        Self {
+            boot_seconds: fs::read_to_string(root.join("stat"))
+                .ok()
+                .and_then(|value| procfs::boot_seconds(&value)),
+            ticks_per_second: u64::try_from(ticks).ok().filter(|value| *value > 0),
+            page_size: u64::try_from(page_size).ok().filter(|value| *value > 0),
         }
-        if include_memory {
-          info.memory = get_memory(pid).map(|m| m as f64);
-        }
-        if include_start_time {
-          info.start_time = get_start_time(pid);
-        }
-
-        processes.push(info);
-      }
     }
-  }
-
-  processes
 }
 
-/// Get a single process by PID
-pub fn get_process(
-  pid: u32,
-  include_ppid: bool,
-  include_memory: bool,
-  include_start_time: bool,
-) -> Option<ProcessInfo> {
-  // Placeholder implementation for Linux.
-  // Returned values are best-effort and currently not guaranteed.
-  let proc_path = format!("/proc/{}", pid);
-  if !Path::new(&proc_path).exists() {
-    return None;
-  }
+pub fn list_processes(pids: Option<&[u32]>) -> io::Result<Vec<Process>> {
+    let root = Path::new("/proc");
+    let clock = Clock::read(root);
+    if let Some(pids) = pids {
+        return pids
+            .iter()
+            .filter_map(|pid| read_process(root, *pid, &clock).transpose())
+            .collect();
+    }
+    let mut processes = Vec::new();
+    // Failure to enumerate procfs is a failed query, not an empty process list.
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if let Some(process) = read_process(root, pid, &clock)? {
+            processes.push(process);
+        }
+    }
+    Ok(processes)
+}
 
-  let foreground_pid = get_foreground_pid();
-  let name = get_name(pid)?;
+pub fn get_process(pid: u32) -> io::Result<Option<Process>> {
+    let root = Path::new("/proc");
+    // Distinguish an absent procfs mount from an absent PID.
+    fs::metadata(root)?;
+    read_process(root, pid, &Clock::read(root))
+}
 
-  let mut info = ProcessInfo::new(pid, name);
-  info.path = get_path(pid);
-  info.is_foreground = foreground_pid == Some(pid);
+fn read_process(root: &Path, pid: u32, clock: &Clock) -> io::Result<Option<Process>> {
+    let directory = root.join(pid.to_string());
+    let mut process = Process::new(pid);
+    let stat = match fs::read(directory.join("stat")) {
+        Ok(bytes) => procfs::parse_stat(&bytes)
+            .filter(|stat| stat.pid == pid)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Invalid procfs stat for PID {pid}"),
+                )
+            })?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => return Ok(Some(process)),
+        Err(error) => return Err(error),
+    };
+    process.name = Some(stat.name);
+    process.parent_pid = Some(stat.parent_pid);
+    process.memory_bytes = stat
+        .resident_pages
+        .zip(clock.page_size)
+        .and_then(|(pages, size)| pages.checked_mul(size));
+    process.started_at = clock
+        .boot_seconds
+        .zip(clock.ticks_per_second)
+        .and_then(|(boot, ticks)| procfs::start_ms(boot, stat.start_ticks, ticks));
+    process.executable_path = fs::read_link(directory.join("exe"))
+        .ok()
+        .map(|value| value.to_string_lossy().into_owned());
+    // Do not combine a recycled PID's executable path with the earlier process's metadata.
+    match fs::read(directory.join("stat")) {
+        Ok(bytes)
+            if procfs::parse_stat(&bytes)
+                .is_some_and(|end| end.pid == pid && end.start_ticks == stat.start_ticks) =>
+        {
+            Ok(Some(process))
+        }
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            process.executable_path = None;
+            Ok(Some(process))
+        }
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+        _ => Ok(None),
+    }
+}
 
-  if include_ppid {
-    info.ppid = get_ppid(pid);
-  }
-  if include_memory {
-    info.memory = get_memory(pid).map(|m| m as f64);
-  }
-  if include_start_time {
-    info.start_time = get_start_time(pid);
-  }
+pub fn foreground() -> io::Result<Foreground> {
+    match session(
+        std::env::var("XDG_SESSION_TYPE").ok().as_deref(),
+        std::env::var_os("WAYLAND_DISPLAY").is_some_and(|value| !value.is_empty()),
+        std::env::var("DISPLAY").ok().as_deref(),
+    ) {
+        Some(reason) => Ok(Foreground::Unavailable { reason }),
+        None => x11::foreground(),
+    }
+}
 
-  Some(info)
+fn session(
+    kind: Option<&str>,
+    wayland_display: bool,
+    display: Option<&str>,
+) -> Option<&'static str> {
+    if kind.is_some_and(|kind| kind.eq_ignore_ascii_case("wayland")) || wayland_display {
+        Some("wayland")
+    } else if display.is_none_or(str::is_empty) {
+        Some("no-display")
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn never_mistakes_xwayland_for_the_full_desktop() {
+        assert_eq!(session(Some("wayland"), false, Some(":0")), Some("wayland"));
+        assert_eq!(session(None, true, Some(":0")), Some("wayland"));
+        assert_eq!(session(None, false, None), Some("no-display"));
+        assert_eq!(session(Some("x11"), false, Some(":0")), None);
+    }
 }
