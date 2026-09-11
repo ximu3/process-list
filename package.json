@@ -14,6 +14,7 @@
     "./package.json": "./package.json"
   },
   "files": [
+    "README.zh-CN.md",
     "index.js",
     "index.d.ts",
     "native/binding.js",

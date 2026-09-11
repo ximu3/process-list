@@ -1,9 +1,4 @@
 # Changelog
 
-Each release has a directory named after its version tag and a nonempty English release note:
-
-```text
-changelog/vX.Y.Z/en.md
-```
-
-The publish workflow checks this file before building. Follow [the release procedure](../docs/releasing.md) for version synchronization, platform verification, and npm publication.
+- [0.1.0](v0.1.0/en.md)
+- [0.0.2](v0.0.2/en.md)
