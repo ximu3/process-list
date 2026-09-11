@@ -55,7 +55,9 @@ export function normalize(path) {
 
 export async function isCheckout() {
   if (!(await info(resolve(root, '.git')))) return false
-  return normalize(git(['rev-parse', '--show-toplevel']).trim()) === normalize(root)
+  const top = await realpath(git(['rev-parse', '--show-toplevel']).trim())
+  // Git and Node can spell the same Windows directory with long names or 8.3 aliases.
+  return normalize(top) === normalize(await realpath(root))
 }
 
 async function checkDirectory() {
@@ -100,13 +102,14 @@ export async function prepareInstallation() {
 }
 
 async function anotherCheckoutUsesHooks() {
+  const current = normalize(await realpath(root))
   const paths = git(['worktree', 'list', '--porcelain', '-z'])
     .split('\0')
     .filter((field) => field.startsWith('worktree '))
     .map((field) => field.slice(9))
   for (const path of paths) {
-    if (normalize(path) === normalize(root)) continue
-    if (await info(resolve(path, configuredPath, 'h'))) return true
+    if (!(await info(resolve(path, configuredPath, 'h')))) continue
+    if (normalize(await realpath(path)) !== current) return true
   }
   return false
 }

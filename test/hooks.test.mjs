@@ -78,6 +78,8 @@ async function fixture(t, install = true) {
     },
   })
   await writeFile(join(repo, '.gitignore'), 'node_modules\n/target\n.husky/_/\n')
+  // Fixtures borrow installed tooling; pnpm must not reinstall through the node_modules link.
+  await writeFile(join(repo, 'pnpm-workspace.yaml'), 'verifyDepsBeforeRun: false\n')
   await writeFile(
     join(repo, 'Cargo.toml'),
     '[package]\nname = "hook_fixture"\nversion = "0.0.0"\nedition = "2024"\n',
@@ -196,6 +198,35 @@ test('installation is repeatable and preserves custom hook paths', async (t) => 
   assert.equal(git(repo, ['config', '--get', 'core.hooksPath']).trim(), '.custom-hooks')
   assert.equal(await readFile(join(repo, '.custom-hooks/pre-commit'), 'utf8'), '# custom hook\n')
 })
+
+test(
+  'Windows short paths identify the same checkout during hook installation and cleanup',
+  { skip: process.platform !== 'win32' },
+  async (t) => {
+    const repo = await fixture(t, false)
+    const converted = run(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        '(New-Object -ComObject Scripting.FileSystemObject).GetFolder($env:PROCESS_LIST_TEST_DIRECTORY).ShortPath',
+      ],
+      repo,
+      { ...environment(repo), PROCESS_LIST_TEST_DIRECTORY: repo },
+    )
+    assert.equal(converted.status, 0, converted.stderr || converted.stdout)
+    const alias = converted.stdout.trim()
+    if (alias.toLowerCase() === repo.toLowerCase()) return t.skip('Windows short names are disabled')
+    const installed = run(process.execPath, [join(alias, 'scripts/install-hooks.mjs')], alias)
+    assert.equal(installed.status, 0, installed.stderr || installed.stdout)
+    assert.equal(git(repo, ['config', '--get', 'core.hooksPath']).trim(), '.husky/_')
+    assert.match(await readFile(join(repo, '.husky/_/h'), 'utf8'), /husky/)
+    uninstall(alias)
+    await missing(join(repo, '.husky/_'))
+    assert.equal(run('git', ['config', '--local', '--get', 'core.hooksPath'], repo).status, 1)
+  },
+)
 
 test('CI and HUSKY=0 skip installation; nested source copies leave parent hooks alone', async (t) => {
   const repo = await fixture(t, false)
