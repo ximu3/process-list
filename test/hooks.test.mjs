@@ -56,7 +56,7 @@ async function fixture(t, install = true) {
   for (const file of [
     '.husky/pre-commit',
     '.husky/pre-push',
-    'lint-staged.config.mjs',
+    'lint-staged.config.ts',
     '.prettierignore',
     'scripts/install-hooks.mjs',
     'scripts/uninstall-hooks.mjs',

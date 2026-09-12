@@ -45,6 +45,7 @@ jobs:
     uses: ./.github/workflows/verify.yml
     with:
       ref: ${{ needs.metadata.outputs.sha }}
+      full: true
 
   npm:
     needs: [metadata, verify]

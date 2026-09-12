@@ -1,0 +1,22 @@
+name: Feature request / 功能建议
+description: Describe a use case or propose a change. / 描述使用场景或提出改进建议。
+body:
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case / 使用场景
+      description: What are you trying to do, and what is missing? / 想完成什么任务，目前遇到了什么不足？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Expected behavior / 期望行为
+      description: Describe the behavior that would help. A proposed API is optional. / 描述希望提供的行为，无需预先设计完整 API。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives / 其他方案
+      description: Mention alternatives or workarounds you have considered. / 可以补充考虑过的其他做法。
