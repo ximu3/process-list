@@ -4,21 +4,23 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { packArtifact, publishArtifacts, readPublishedPackage } from '../scripts/publication.mjs'
+import { packArtifact, publishArtifacts, readPublishedPackage } from '../scripts/publication.ts'
+import type { Artifact, PublishedPackage, PublicationOptions } from '../scripts/publication.ts'
 
-const artifacts = ['native-a', 'native-b', 'main'].map((name) => ({
+const artifact = (name: string): Artifact => ({
   name: `@test/${name}`,
   version: '1.0.0',
   tarball: `${name}.tgz`,
   integrity: `sha512-${name}`,
-}))
+})
+const artifacts = [artifact('native-a'), artifact('native-b'), artifact('main')] as const
 const quiet = { log() {}, retryDelays: [0] }
 
 test('publication resumes after an interruption without republishing verified packages', async () => {
-  const registry = new Map()
-  const attempts = []
+  const registry = new Map<string, PublishedPackage>()
+  const attempts: string[] = []
   let interrupted = false
-  const options = {
+  const options: PublicationOptions = {
     ...quiet,
     lookup: async (artifact) => registry.get(artifact.name) ?? null,
     publish: async (artifact) => {
@@ -54,8 +56,8 @@ test('a conflicting existing version aborts the complete plan before the first u
 })
 
 test('lost upload responses are accepted only after registry integrity matches', async () => {
-  const registry = new Map()
-  const uploads = []
+  const registry = new Map<string, PublishedPackage>()
+  const uploads: string[] = []
   await publishArtifacts(artifacts, {
     ...quiet,
     lookup: async (artifact) => registry.get(artifact.name) ?? null,
@@ -74,7 +76,7 @@ test('lost upload responses are accepted only after registry integrity matches',
 test('verification tolerates bounded registry propagation without publishing the next package early', async () => {
   let uploaded = false
   let reads = 0
-  const delays = []
+  const delays: number[] = []
   await publishArtifacts([artifacts[0]], {
     ...quiet,
     retryDelays: [0, 250, 1000],
@@ -94,7 +96,7 @@ test('verification tolerates bounded registry propagation without publishing the
 
 test('content conflicts after upload stop publication before the main package', async () => {
   let uploaded = false
-  const uploads = []
+  const uploads: string[] = []
   await assert.rejects(
     publishArtifacts(artifacts, {
       ...quiet,
@@ -111,7 +113,7 @@ test('content conflicts after upload stop publication before the main package', 
 
 test('dry runs verify existing versions without publishing missing ones', async () => {
   let uploads = 0
-  const messages = []
+  const messages: string[] = []
   await publishArtifacts(artifacts, {
     ...quiet,
     dryRun: true,
@@ -157,7 +159,7 @@ test('registry lookup distinguishes missing versions, failures and mismatched me
     )
   }
   const metadata = { name: artifact.name, version: artifact.version, dist: { integrity: artifact.integrity } }
-  const response = (value) => async () => Response.json(value)
+  const response = (value: unknown) => async () => Response.json(value)
   assert.deepEqual(await readPublishedPackage(artifact, registry, response(metadata)), {
     integrity: artifact.integrity,
   })
@@ -170,6 +172,7 @@ test('registry lookup distinguishes missing versions, failures and mismatched me
     await assert.rejects(readPublishedPackage(artifact, registry, response(value)))
   }
   await readPublishedPackage(artifact, registry, async (url) => {
+    assert.ok(url instanceof URL)
     assert.equal(url.href, 'https://registry.example.test/%40test%2Fnative-a/1.0.0')
     return Response.json(metadata)
   })

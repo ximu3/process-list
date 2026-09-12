@@ -8,7 +8,7 @@ import {
   recordInstallation,
   root,
   uninstallHooks,
-} from './hooks-state.mjs'
+} from './hooks-state.ts'
 
 const ci = process.env.CI && !['0', 'false'].includes(process.env.CI)
 if (ci || !(await isCheckout())) process.exit(0)

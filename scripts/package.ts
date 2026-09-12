@@ -2,10 +2,11 @@ import assert from 'node:assert/strict'
 import { copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { targets } from '../native/targets.js'
+import manifest from '../package.json' with { type: 'json' }
+import { targets } from '../native/targets.ts'
 
 export const root = fileURLToPath(new URL('../', import.meta.url))
-export const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
+export { manifest }
 export const binaryName = 'process-list'
 
 export async function validateProject() {
@@ -21,19 +22,16 @@ export async function validateProject() {
   assert.equal(version, manifest.version, 'Rust and npm versions must agree')
 }
 
-/** @param {string} path */
-export async function requireFile(path) {
+export async function requireFile(path: string) {
   const info = await stat(path)
   assert.ok(info.isFile() && info.size > 0, `Missing or empty artifact: ${path}`)
 }
 
-/** @param {string} path @param {unknown} value */
-export async function writeJson(path, value) {
+export async function writeJson(path: string, value: unknown) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`)
 }
 
-/** @param {string} directory */
-export async function stageMain(directory) {
+export async function stageMain(directory: string) {
   await mkdir(join(directory, 'native'), { recursive: true })
   for (const file of ['README.md', 'LICENSE', ...manifest.files]) {
     await copyFile(join(root, file), join(directory, file))
@@ -55,8 +53,7 @@ export async function stageMain(directory) {
   })
 }
 
-/** @param {string} directory @param {(typeof targets)[number]} target @param {string} source */
-export async function stagePlatform(directory, target, source) {
+export async function stagePlatform(directory: string, target: (typeof targets)[number], source: string) {
   await requireFile(source)
   await mkdir(directory, { recursive: true })
   const filename = `${binaryName}.${target.suffix}.node`

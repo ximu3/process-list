@@ -3,13 +3,29 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { npm } from './npm.mjs'
+import { npm } from './npm.ts'
 
-/** @typedef {{ name: string, version: string, tarball: string, integrity: string }} Artifact */
-/** @typedef {{ integrity: string }} PublishedPackage */
+export interface Artifact {
+  name: string
+  version: string
+  tarball: string
+  integrity: string
+}
 
-/** @param {string} directory @param {string} destination @returns {Promise<Artifact>} */
-export async function packArtifact(directory, destination) {
+export interface PublishedPackage {
+  integrity: string
+}
+
+export interface PublicationOptions {
+  lookup: (artifact: Artifact) => Promise<PublishedPackage | null>
+  publish: (artifact: Artifact) => Promise<void>
+  dryRun?: boolean
+  log?: (message: string) => void
+  retryDelays?: readonly number[]
+  wait?: (milliseconds: number) => Promise<unknown>
+}
+
+export async function packArtifact(directory: string, destination: string): Promise<Artifact> {
   const [packed] = JSON.parse(
     npm(['pack', '--json', '--ignore-scripts', '--pack-destination', destination], directory),
   )
@@ -23,13 +39,11 @@ export async function packArtifact(directory, destination) {
   return { name: packed.name, version: packed.version, tarball, integrity }
 }
 
-/**
- * @param {Artifact} artifact
- * @param {string} registry
- * @param {typeof fetch} [request]
- * @returns {Promise<PublishedPackage | null>}
- */
-export async function readPublishedPackage(artifact, registry, request = fetch) {
+export async function readPublishedPackage(
+  artifact: Artifact,
+  registry: string,
+  request: typeof fetch = fetch,
+): Promise<PublishedPackage | null> {
   const url = new URL(
     `${encodeURIComponent(artifact.name)}/${encodeURIComponent(artifact.version)}`,
     registry.endsWith('/') ? registry : `${registry}/`,
@@ -47,8 +61,7 @@ export async function readPublishedPackage(artifact, registry, request = fetch) 
   return { integrity: metadata.dist.integrity }
 }
 
-/** @param {Artifact} artifact @param {PublishedPackage} published */
-function assertSameContent(artifact, published) {
+function assertSameContent(artifact: Artifact, published: PublishedPackage) {
   if (published.integrity !== artifact.integrity) {
     throw new Error(
       `${artifact.name}@${artifact.version} already exists with different content. Reuse the original build artifacts or choose a new version.`,
@@ -56,19 +69,7 @@ function assertSameContent(artifact, published) {
   }
 }
 
-/**
- * Verify every existing version before publishing any package. Caller order keeps the main package last.
- * @param {readonly Artifact[]} artifacts
- * @param {{
- *   lookup: (artifact: Artifact) => Promise<PublishedPackage | null>,
- *   publish: (artifact: Artifact) => Promise<void>,
- *   dryRun?: boolean,
- *   log?: (message: string) => void,
- *   retryDelays?: readonly number[],
- *   wait?: (milliseconds: number) => Promise<unknown>,
- * }} options
- */
-export async function publishArtifacts(artifacts, options) {
+export async function publishArtifacts(artifacts: readonly Artifact[], options: PublicationOptions) {
   const {
     lookup,
     publish,

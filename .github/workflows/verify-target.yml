@@ -58,15 +58,15 @@ jobs:
         if: ${{ !inputs.musl && runner.os == 'Linux' }}
         env:
           NATIVE_TARGET: ${{ inputs.target }}
-        run: pnpm exec napi build --platform --release --no-js --output-dir native --dts binding.d.ts --target "$NATIVE_TARGET" --use-napi-cross -- --locked
+        run: pnpm exec napi build --platform --release --no-js --output-dir native --dts addon.d.ts --target "$NATIVE_TARGET" --use-napi-cross -- --locked
       - name: Build with the platform SDK
         if: ${{ !inputs.musl && runner.os != 'Linux' }}
-        run: pnpm exec napi build --platform --release --no-js --output-dir native --dts binding.d.ts --target ${{ inputs.target }} -- --locked
+        run: pnpm exec napi build --platform --release --no-js --output-dir native --dts addon.d.ts --target ${{ inputs.target }} -- --locked
       - name: Build natively in Alpine
         if: inputs.musl
-        run: docker run --rm -e CI=true -v "$PWD:/work" -w /work node:24-alpine sh scripts/ci-alpine-build.sh
+        run: docker run --rm -e CI=true -v "$PWD:/work" -w /work node:24-alpine node scripts/ci-alpine-build.ts
       - name: Verify generated declarations
-        run: git diff --exit-code -- native/binding.d.ts
+        run: git diff --exit-code -- native/addon.d.ts
       - name: Exercise X11 on an isolated display
         if: ${{ !inputs.musl && runner.os == 'Linux' }}
         env:
@@ -103,6 +103,10 @@ jobs:
         with:
           name: native-${{ inputs.target }}
           path: native
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: library
+          path: .
       - if: ${{ !inputs.musl }}
         run: npm test
       - if: ${{ !inputs.musl }}

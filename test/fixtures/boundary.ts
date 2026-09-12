@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
 import { mock } from 'node:test'
+import type { NativeForeground } from '../../native/addon.js'
 
-let cause
+let cause: NodeJS.ErrnoException | undefined
 let calls = 0
 let foregroundCalls = 0
-let foreground = { status: 'none', source: 'win32' }
+let foreground: NativeForeground = { status: 'none', source: 'win32' }
 const record = { pid: process.pid }
-const value = (result) => {
+const value = <T>(result: T): T => {
   calls++
   if (cause) throw cause
   return result
@@ -39,27 +40,28 @@ const failures = [
   ['getProcessSync', 'getProcess', [process.pid]],
   ['getForeground', 'getForeground', []],
   ['getForegroundSync', 'getForeground', []],
-]
+] as const
 cause = Object.assign(new Error('native connection reset'), { code: 'ECONNRESET' })
 for (const [name, operation, args] of failures) {
-  const verify = (error) => {
+  const verify = (error: unknown) => {
     assert.ok(error instanceof api.ProcessQueryError)
     assert.ok(error instanceof Error)
     assert.equal(error.name, 'ProcessQueryError')
     assert.equal(error.code, 'ERR_PROCESS_QUERY_FAILED')
     assert.equal(error.operation, operation)
     assert.equal(error.cause, cause)
+    assert.ok('code' in error.cause)
     assert.equal(error.cause.code, 'ECONNRESET')
     return true
   }
-  if (name.endsWith('Sync')) assert.throws(() => api[name](...args), verify)
-  else await assert.rejects(api[name](...args), verify)
+  if (name.endsWith('Sync')) assert.throws(() => Reflect.apply(api[name], undefined, args), verify)
+  else await assert.rejects(Reflect.apply(api[name], undefined, args), verify)
 }
 
 const beforeValidation = calls
 await assert.rejects(api.getProcess(-1), RangeError)
-assert.throws(() => api.getProcessSync('123'), TypeError)
-await assert.rejects(api.listProcesses({ foreground: true }), TypeError)
+assert.throws(() => Reflect.apply(api.getProcessSync, undefined, ['123']), TypeError)
+await assert.rejects(Reflect.apply(api.listProcesses, undefined, [{ foreground: true }]), TypeError)
 assert.equal(calls, beforeValidation)
 
 cause = undefined

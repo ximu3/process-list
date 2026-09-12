@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { access, readFile, readdir } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
-import { root } from './package.mjs'
+import { root } from './package.ts'
 
 const readmes = ['README.md', 'README.zh-CN.md']
 const sources = await Promise.all(readmes.map((file) => readFile(join(root, file), 'utf8')))

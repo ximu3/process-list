@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "noEmitOnError": true
+  },
+  "include": ["index.ts", "native/binding.ts", "native/targets.ts"]
+}

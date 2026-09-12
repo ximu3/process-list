@@ -3,9 +3,10 @@ import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { parse } from 'yaml'
-import { manifest, root } from '../scripts/package.mjs'
+import { manifest, root } from '../scripts/package.ts'
+import { targets } from '../native/targets.ts'
 
-const yaml = async (path) => parse(await readFile(join(root, path), 'utf8'))
+const yaml = async (path: string) => parse(await readFile(join(root, path), 'utf8'))
 
 test('each target owns its build-to-runtime dependency and publishing always requests full verification', async () => {
   const target = await yaml('.github/workflows/verify-target.yml')
@@ -18,6 +19,16 @@ test('each target owns its build-to-runtime dependency and publishing always req
   assert.equal(verify.jobs.result.if, 'always()')
   assert.deepEqual(verify.jobs.result.needs, ['plan', 'quality', 'platforms'])
   assert.equal(publish.jobs.verify.with.full, true)
+  const matrix: { target: string; runner: string; musl: boolean }[] =
+    verify.jobs.platforms.strategy.matrix.include
+  assert.deepEqual(
+    matrix.map((item) => item.target),
+    targets.map((item) => item.triple),
+  )
+  for (const item of matrix) {
+    assert.ok(item.runner.length > 0)
+    assert.equal(item.musl, targets.find((target) => target.triple === item.target)?.libc === 'musl')
+  }
 })
 
 test('issue forms have valid unique field identifiers and keep the free-form issue entry available', async () => {

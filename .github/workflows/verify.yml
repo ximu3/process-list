@@ -21,7 +21,6 @@ jobs:
     timeout-minutes: 5
     outputs:
       full: ${{ steps.plan.outputs.full }}
-      matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -33,8 +32,51 @@ jobs:
           node-version: '24'
       - id: plan
         env:
+          VERIFICATION_MODE: plan
           FORCE_FULL: ${{ inputs.full }}
-        run: node scripts/ci.mjs plan
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        # This policy is part of the reviewed workflow, with no imports from checked-out code.
+        # Result executes it again rather than trusting the planner's scope output.
+        run: &verification-policy |
+          node --input-type=module-typescript <<'TS'
+          import assert from 'node:assert/strict'
+          import { execFileSync } from 'node:child_process'
+          import { appendFileSync } from 'node:fs'
+
+          const event = process.env.GITHUB_EVENT_NAME
+          const base = process.env.BASE_SHA ?? ''
+          let paths: string[] | null = null
+          if (
+            (event === 'push' || event === 'pull_request') &&
+            /^[a-f0-9]{40}$/i.test(base) && !/^0+$/.test(base)
+          ) {
+            try {
+              const revisions = event === 'pull_request' ? [`${base}...HEAD`] : [base, 'HEAD']
+              paths = execFileSync('git', [
+                'diff', '--no-ext-diff', '--no-textconv', '--name-only', '--no-renames', '-z', ...revisions, '--',
+              ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).split('\0').filter(Boolean)
+            } catch {
+              // Missing history requires the complete matrix.
+            }
+          }
+          const documentation = /^(?:README(?:\.zh-CN)?\.md|LICENSE|changelog\/.+\.md|\.github\/ISSUE_TEMPLATE\/[^/]+\.ya?ml|\.github\/pull_request_template\.md)$/
+          const full = process.env.FORCE_FULL === 'true' || paths === null || paths.some((path) => !documentation.test(path))
+
+          if (process.env.VERIFICATION_MODE === 'plan') {
+            assert.ok(process.env.GITHUB_OUTPUT, 'Missing workflow output file')
+            appendFileSync(process.env.GITHUB_OUTPUT, `full=${full}\n`)
+            console.log(full ? 'Complete native verification required' : 'Documentation and template checks')
+          } else {
+            assert.equal(process.env.VERIFICATION_MODE, 'result', 'Unknown verification mode')
+            type Job = { result?: string; outputs?: { full?: string } }
+            const needs: Record<string, Job | undefined> = JSON.parse(process.env.VERIFICATION_NEEDS ?? '{}')
+            assert.equal(needs.plan?.result, 'success', 'Planning must succeed')
+            assert.equal(needs.plan?.outputs?.full, String(full), 'Planned scope differs from independently required scope')
+            assert.equal(needs.quality?.result, 'success', 'Quality checks must succeed')
+            assert.equal(needs.platforms?.result, full ? 'success' : 'skipped', 'Native checks do not match the required scope')
+            console.log('All required verification passed')
+          }
+          TS
 
   quality:
     name: Quality
@@ -54,6 +96,17 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm check:docs
       - run: pnpm test:tooling
+      - run: pnpm build:js
+      - run: pnpm test:types
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: library
+          path: |
+            index.js
+            index.d.ts
+            native/binding.js
+            native/targets.js
+          if-no-files-found: error
 
   platforms:
     needs: [plan, quality]
@@ -61,7 +114,32 @@ jobs:
     name: ${{ matrix.target }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2022
+            musl: false
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            musl: false
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            musl: false
+          - target: aarch64-apple-darwin
+            runner: macos-15
+            musl: false
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            musl: false
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            musl: false
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            musl: true
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            musl: true
     uses: ./.github/workflows/verify-target.yml
     with:
       ref: ${{ inputs.ref || github.sha }}
@@ -79,10 +157,14 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: '24'
       - env:
+          VERIFICATION_MODE: result
+          FORCE_FULL: ${{ inputs.full }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           VERIFICATION_NEEDS: ${{ toJSON(needs) }}
-        run: node scripts/ci.mjs result
+        run: *verification-policy

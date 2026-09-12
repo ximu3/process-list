@@ -5,20 +5,18 @@
     "moduleResolution": "NodeNext",
     "strict": true,
     "noEmit": true,
-    "allowJs": true,
-    "checkJs": true,
     "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@ximu3/process-list": ["./index.ts"]
+    }
   },
-  "include": [
-    "index.js",
-    "index.d.ts",
-    "native/*.js",
-    "test/types.test.ts",
-    "scripts/*.mjs",
-    "lint-staged.config.ts"
-  ],
-  "exclude": ["node_modules"]
+  "include": ["index.ts", "native/*.ts", "test/**/*.ts", "scripts/*.ts", "lint-staged.config.ts"],
+  "exclude": ["node_modules", "**/*.d.ts"]
 }

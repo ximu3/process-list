@@ -29,26 +29,23 @@ const managedNames = new Set([
   'pre-auto-gc',
 ])
 
-/** @param {string[]} args @param {number[]} [accepted] */
-export function git(args, accepted = [0]) {
+export function git(args: string[], accepted: number[] = [0]) {
   const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true })
   if (result.error) throw result.error
   if (!accepted.includes(result.status ?? -1)) throw new Error(result.stderr || `git ${args[0]} failed`)
   return result.stdout
 }
 
-/** @param {string} path */
-async function info(path) {
+async function info(path: string) {
   try {
     return await lstat(path)
   } catch (error) {
-    if (/** @type {NodeJS.ErrnoException} */ (error).code === 'ENOENT') return null
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw error
   }
 }
 
-/** @param {string} path */
-export function normalize(path) {
+export function normalize(path: string) {
   const absolute = resolve(root, path)
   return process.platform === 'win32' ? absolute.toLowerCase() : absolute
 }
@@ -74,8 +71,7 @@ async function checkDirectory() {
   }
 }
 
-/** @param {string} path */
-async function digest(path) {
+async function digest(path: string) {
   const entry = await info(path)
   if (!entry?.isFile() || entry.isSymbolicLink()) return null
   return createHash('sha256')
@@ -88,8 +84,7 @@ export async function recordInstallation() {
   const recordInfo = await info(record)
   if (recordInfo && (!recordInfo.isFile() || recordInfo.isSymbolicLink()))
     throw new Error('Hook installation record is not a regular file')
-  /** @type {Record<string, string>} */
-  const files = {}
+  const files: Record<string, string> = {}
   for (const name of managedNames) {
     const hash = await digest(resolve(generated, name))
     if (hash) files[name] = hash
@@ -118,8 +113,7 @@ async function anotherCheckoutUsesHooks() {
 export async function uninstallHooks() {
   if (!(await isCheckout())) return
   await checkDirectory()
-  /** @type {Record<string, string>} */
-  let files = {}
+  let files: Record<string, string> = {}
   const recordInfo = await info(record)
   if (recordInfo) {
     if (!recordInfo.isFile() || recordInfo.isSymbolicLink())
@@ -167,8 +161,7 @@ export async function uninstallHooks() {
   try {
     await rmdir(generated)
   } catch (error) {
-    if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(/** @type {NodeJS.ErrnoException} */ (error).code ?? ''))
-      throw error
+    if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
   }
   console.log(
     shared

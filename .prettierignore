@@ -5,5 +5,8 @@ artifacts
 .tools
 tmp
 pnpm-lock.yaml
-native/binding.d.ts
+index.js
+index.d.ts
+native/*.js
+native/*.d.ts
 .husky/_

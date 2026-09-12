@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { appendFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { manifest, requireFile, root, validateProject } from './package.mjs'
+import { manifest, requireFile, root, validateProject } from './package.ts'
 
 await validateProject()
 const tag = process.env.RELEASE_TAG

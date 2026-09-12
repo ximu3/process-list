@@ -2,17 +2,17 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { targets } from '../native/targets.js'
-import { npm } from './npm.mjs'
-import { manifest, requireFile, root, validateProject } from './package.mjs'
-import { packArtifact, publishArtifacts, readPublishedPackage } from './publication.mjs'
+import { targets } from '../native/targets.ts'
+import { npm } from './npm.ts'
+import { manifest, requireFile, root, validateProject } from './package.ts'
+import { packArtifact, publishArtifacts, readPublishedPackage } from './publication.ts'
 
 await validateProject()
 const tag = process.env.NPM_DIST_TAG
 if (tag !== 'latest' && tag !== 'next') throw new Error('NPM_DIST_TAG must be latest or next')
 const arguments_ = process.argv.slice(2)
 if (arguments_.some((argument) => argument !== '--dry-run'))
-  throw new Error('Usage: node scripts/publish.mjs [--dry-run]')
+  throw new Error('Usage: node scripts/publish.ts [--dry-run]')
 const registry = manifest.publishConfig.registry
 const directories = [...targets.map((target) => target.suffix), 'main']
 // Reject a stale or incomplete staging directory before the first network mutation.

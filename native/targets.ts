@@ -1,5 +1,13 @@
+export interface NativeTarget {
+  triple: string
+  suffix: string
+  os: 'win32' | 'darwin' | 'linux'
+  cpu: 'x64' | 'arm64'
+  libc?: 'glibc' | 'musl'
+}
+
 /** The native distribution matrix, shared by the loader and release tooling. */
-export const targets = [
+export const targets: readonly NativeTarget[] = [
   { triple: 'x86_64-pc-windows-msvc', suffix: 'win32-x64-msvc', os: 'win32', cpu: 'x64' },
   { triple: 'aarch64-pc-windows-msvc', suffix: 'win32-arm64-msvc', os: 'win32', cpu: 'arm64' },
   { triple: 'x86_64-apple-darwin', suffix: 'darwin-x64', os: 'darwin', cpu: 'x64' },
@@ -22,8 +30,7 @@ export const targets = [
   },
 ]
 
-/** @param {string} os @param {string} cpu @param {string | undefined} [libc] */
-export function selectTarget(os, cpu, libc) {
+export function selectTarget(os: string, cpu: string, libc?: string | undefined) {
   const target = targets.find((target) => target.os === os && target.cpu === cpu && target.libc === libc)
   if (!target) {
     throw Object.assign(
@@ -39,12 +46,12 @@ export function selectTarget(os, cpu, libc) {
 export function currentTarget() {
   let libc
   if (process.platform === 'linux') {
-    const reporting = /** @type {NodeJS.ProcessReport & { excludeNetwork: boolean }} */ (process.report)
+    const reporting = process.report as NodeJS.ProcessReport & { excludeNetwork: boolean }
     // Avoid DNS/network collection, and restore the caller's setting even if report generation fails.
     const previous = reporting.excludeNetwork
     try {
       reporting.excludeNetwork = true
-      const report = /** @type {{ header: { glibcVersionRuntime?: string } }} */ (reporting.getReport())
+      const report = reporting.getReport() as { header: { glibcVersionRuntime?: string } }
       libc = report.header.glibcVersionRuntime ? 'glibc' : 'musl'
     } finally {
       reporting.excludeNetwork = previous

@@ -3,8 +3,8 @@ import { spawnSync } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { currentTarget, targets } from '../native/targets.js'
-import { npm } from './npm.mjs'
+import { currentTarget, targets } from '../native/targets.ts'
+import { npm } from './npm.ts'
 import {
   binaryName,
   manifest,
@@ -13,7 +13,7 @@ import {
   stagePlatform,
   validateProject,
   writeJson,
-} from './package.mjs'
+} from './package.ts'
 
 await validateProject()
 const temporary = await mkdtemp(join(tmpdir(), 'process-list-package-'))
@@ -30,7 +30,7 @@ try {
   const [packedPlatform] = JSON.parse(
     npm(['pack', '--json', '--ignore-scripts', '--pack-destination', temporary], platform),
   )
-  const files = packedMain.files.map((/** @type {{path: string}} */ file) => file.path)
+  const files = packedMain.files.map((file: { path: string }) => file.path)
   assert.deepEqual(files.sort(), ['package.json', 'README.md', 'LICENSE', ...manifest.files].sort())
   const published = JSON.parse(await readFile(join(main, 'package.json'), 'utf8'))
   assert.equal(published.private, undefined, 'The staged distribution must be publishable')
