@@ -14,8 +14,7 @@ function npmCli() {
   return cli
 }
 
-/** @param {string[]} args @param {string} cwd */
-export function npm(args, cwd) {
+export function npm(args: string[], cwd: string) {
   const result = spawnSync(process.execPath, [npmCli(), ...args], {
     cwd,
     encoding: 'utf8',

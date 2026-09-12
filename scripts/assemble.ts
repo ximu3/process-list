@@ -1,6 +1,6 @@
 import { join, resolve } from 'node:path'
-import { targets } from '../native/targets.js'
-import { binaryName, requireFile, root, stageMain, stagePlatform, validateProject } from './package.mjs'
+import { targets } from '../native/targets.ts'
+import { binaryName, requireFile, root, stageMain, stagePlatform, validateProject } from './package.ts'
 
 await validateProject()
 const source = resolve(process.argv[2] ?? join(root, 'artifacts'))

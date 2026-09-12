@@ -9,6 +9,9 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { Worker } from 'node:worker_threads'
 import {
+  type ForegroundResult,
+  type ForegroundSource,
+  type ProcessInfo,
   getForeground,
   getForegroundSync,
   getProcess,
@@ -19,7 +22,8 @@ import {
 
 const processKeys = ['executablePath', 'memoryBytes', 'name', 'parentPid', 'pid', 'startedAt']
 
-function assertProcess(value) {
+function assertProcess(value: ProcessInfo | null | undefined): asserts value is ProcessInfo {
+  assert.ok(value)
   assert.deepEqual(Object.keys(value).sort(), processKeys)
   assert.ok(Number.isInteger(value.pid) && value.pid >= 0)
   assert.ok(value.name === null || typeof value.name === 'string')
@@ -29,7 +33,7 @@ function assertProcess(value) {
   assert.ok(value.startedAt === null || (Number.isFinite(value.startedAt) && value.startedAt >= 0))
 }
 
-function assertForeground(value) {
+function assertForeground(value: ForegroundResult) {
   if (value.status === 'active') {
     assert.deepEqual(Object.keys(value).sort(), ['pid', 'source', 'status'])
     assert.ok(Number.isInteger(value.pid) && value.pid > 0)
@@ -51,7 +55,12 @@ function assertForeground(value) {
     return
   }
   assert.ok(['win32', 'appkit', 'x11'].includes(value.source))
-  assert.equal(value.source, { win32: 'win32', darwin: 'appkit', linux: 'x11' }[process.platform])
+  const sources: Partial<Record<NodeJS.Platform, ForegroundSource>> = {
+    win32: 'win32',
+    darwin: 'appkit',
+    linux: 'x11',
+  }
+  assert.equal(value.source, sources[process.platform])
 }
 
 test('self query returns actual details with consistent units and nullability', async () => {
@@ -59,12 +68,15 @@ test('self query returns actual details with consistent units and nullability', 
   assertProcess(value)
   assert.equal(value.pid, process.pid)
   assert.equal(value.parentPid, process.ppid)
-  assert.ok(value.name.length > 0)
+  assert.ok(value.name && value.name.length > 0)
+  assert.ok(value.executablePath)
   assert.equal(realpathSync(value.executablePath), realpathSync(process.execPath))
-  assert.ok(value.memoryBytes > 0)
+  assert.ok(value.memoryBytes !== null && value.memoryBytes > 0)
+  assert.ok(value.startedAt !== null)
   assert.ok(Math.abs(value.startedAt - (Date.now() - process.uptime() * 1000)) < 10_000)
   const sync = getProcessSync(process.pid)
-  for (const key of ['pid', 'parentPid', 'name', 'executablePath', 'startedAt'])
+  assertProcess(sync)
+  for (const key of ['pid', 'parentPid', 'name', 'executablePath', 'startedAt'] as const)
     assert.equal(value[key], sync[key])
 })
 
@@ -103,19 +115,20 @@ test(
   { timeout: 15_000 },
   async (t) => {
     const before = Date.now()
-    const child = fork(new URL('./fixtures/child.js', import.meta.url), {
-      execArgv: [],
+    const child = fork(new URL('./fixtures/child.ts', import.meta.url), {
+      execArgv: ['--experimental-strip-types'],
       stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
     })
     t.after(() => {
       if (child.exitCode === null) child.kill()
     })
     await once(child, 'message')
+    assert.ok(child.pid)
     const value = await getProcess(child.pid)
     assertProcess(value)
     assert.equal(value.parentPid, process.pid)
-    assert.ok(value.startedAt >= before - 1000 && value.startedAt <= Date.now())
-    assert.ok(value.memoryBytes > 0)
+    assert.ok(value.startedAt !== null && value.startedAt >= before - 1000 && value.startedAt <= Date.now())
+    assert.ok(value.memoryBytes !== null && value.memoryBytes > 0)
     const exited = once(child, 'exit')
     child.send('exit')
     await exited
@@ -131,8 +144,8 @@ test('invalid PIDs are rejected before native integer conversion', async () => {
     await assert.rejects(listProcesses({ pids: [pid] }), RangeError)
   }
   for (const pid of ['1', null, undefined, 1n, {}, true]) {
-    assert.throws(() => getProcessSync(pid), TypeError)
-    await assert.rejects(getProcess(pid), TypeError)
+    assert.throws(() => Reflect.apply(getProcessSync, undefined, [pid]), TypeError)
+    await assert.rejects(Reflect.apply(getProcess, undefined, [pid]), TypeError)
   }
   assert.doesNotThrow(() => getProcessSync(0))
 })
@@ -153,8 +166,8 @@ test('invalid options never silently change a query', async () => {
     { pids: new Array(1) },
     { [Symbol('unknown')]: true },
   ]) {
-    assert.throws(() => listProcessesSync(options), TypeError)
-    await assert.rejects(listProcesses(options), TypeError)
+    assert.throws(() => Reflect.apply(listProcessesSync, undefined, [options]), TypeError)
+    await assert.rejects(Reflect.apply(listProcesses, undefined, [options]), TypeError)
   }
 })
 
@@ -165,13 +178,19 @@ test('foreground queries have the same state contract in both execution modes', 
 
 test('independent concurrent queries do not share mutable records', async () => {
   const lists = await Promise.all(Array.from({ length: 12 }, () => listProcesses({ pids: [process.pid] })))
-  for (const processes of lists) assert.equal(processes[0].pid, process.pid)
-  lists[0][0].name = 'changed by caller'
-  assert.notEqual(lists[1][0].name, 'changed by caller')
+  for (const processes of lists) assert.equal(processes[0]?.pid, process.pid)
+  const first = lists[0]?.[0]
+  const second = lists[1]?.[0]
+  assertProcess(first)
+  assertProcess(second)
+  Reflect.set(first, 'name', 'changed by caller')
+  assert.notEqual(second.name, 'changed by caller')
 })
 
 test('the binding works inside a Node.js worker', { timeout: 10_000 }, async (t) => {
-  const worker = new Worker(new URL('./fixtures/worker.js', import.meta.url))
+  const worker = new Worker(new URL('./fixtures/worker.ts', import.meta.url), {
+    execArgv: ['--experimental-strip-types'],
+  })
   t.after(() => worker.terminate())
   const [message] = await once(worker, 'message')
   assert.equal(message.pid, process.pid)
@@ -195,14 +214,16 @@ test(
       await mkdir(directory, { recursive: true })
       const executable = join(directory, '进程.exe')
       await copyFile(process.execPath, executable)
-      child = fork(new URL('./fixtures/child.js', import.meta.url), {
+      child = fork(new URL('./fixtures/child.ts', import.meta.url), {
         execPath: toNamespacedPath(executable),
-        execArgv: [],
+        execArgv: ['--experimental-strip-types'],
         stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
       })
       await once(child, 'message')
+      assert.ok(child.pid)
       const value = await getProcess(child.pid)
-      assert.ok(value.executablePath.length > 512)
+      assertProcess(value)
+      assert.ok(value.executablePath && value.executablePath.length > 512)
       assert.equal(realpathSync(value.executablePath), realpathSync(executable))
     } finally {
       if (child?.exitCode === null) {
@@ -219,10 +240,14 @@ test(
   'async queries use the worker pool and leave JavaScript timers responsive',
   { timeout: 15_000 },
   async () => {
-    const child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/async.js', import.meta.url))], {
-      env: { ...process.env, UV_THREADPOOL_SIZE: '1' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    const child = spawn(
+      process.execPath,
+      ['--experimental-strip-types', fileURLToPath(new URL('./fixtures/async.ts', import.meta.url))],
+      {
+        env: { ...process.env, UV_THREADPOOL_SIZE: '1' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    )
     let error = ''
     child.stderr.setEncoding('utf8').on('data', (chunk) => {
       error += chunk

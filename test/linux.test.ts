@@ -7,7 +7,7 @@ for (const [expected, session] of [
   ['no-display', {}],
   ['wayland', { XDG_SESSION_TYPE: 'wayland', WAYLAND_DISPLAY: 'wayland-0', DISPLAY: 'invalid-display' }],
   ['error', { XDG_SESSION_TYPE: 'x11', DISPLAY: 'invalid-display' }],
-]) {
+] as const) {
   test(
     `Linux foreground result: ${expected}; process listing remains independent`,
     { skip: process.platform !== 'linux' },
@@ -19,7 +19,11 @@ for (const [expected, session] of [
       Object.assign(env, session)
       const result = spawnSync(
         process.execPath,
-        [fileURLToPath(new URL('./fixtures/linux-session.js', import.meta.url)), expected],
+        [
+          '--experimental-strip-types',
+          fileURLToPath(new URL('./fixtures/linux-session.ts', import.meta.url)),
+          expected,
+        ],
         { env, encoding: 'utf8', timeout: 15_000, windowsHide: true },
       )
       assert.equal(result.status, 0, result.error?.message ?? result.stderr)

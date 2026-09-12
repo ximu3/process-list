@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { manifest, root } from './package.mjs'
+import { manifest, root } from './package.ts'
 
 if (!/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?$/.test(manifest.version))
   throw new Error('Invalid package.json version')

@@ -14,10 +14,10 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'node:test'
-import { manifest, root, writeJson } from '../scripts/package.mjs'
+import { test, type TestContext } from 'node:test'
+import { manifest, root, writeJson } from '../scripts/package.ts'
 
-function environment(repo) {
+function environment(repo: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
     CI: '0',
@@ -29,19 +29,19 @@ function environment(repo) {
   }
 }
 
-function run(command, args, cwd, env = environment(cwd)) {
+function run(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv = environment(cwd)) {
   const result = spawnSync(command, args, { cwd, env, encoding: 'utf8', windowsHide: true, timeout: 30_000 })
   if (result.error) throw result.error
   return result
 }
 
-function git(repo, args) {
+function git(repo: string, args: string[]) {
   const result = run('git', args, repo)
   assert.equal(result.status, 0, result.stderr || result.stdout)
   return result.stdout
 }
 
-async function fixture(t, install = true) {
+async function fixture(t: TestContext, install = true) {
   const repo = await mkdtemp(join(tmpdir(), 'process-list-hooks-'))
   t.after(() => rm(repo, { recursive: true, force: true }))
   git(repo, ['init', '--quiet', '--template='])
@@ -56,11 +56,11 @@ async function fixture(t, install = true) {
   for (const file of [
     '.husky/pre-commit',
     '.husky/pre-push',
-    'lint-staged.config.mjs',
+    'lint-staged.config.ts',
     '.prettierignore',
-    'scripts/install-hooks.mjs',
-    'scripts/uninstall-hooks.mjs',
-    'scripts/hooks-state.mjs',
+    'scripts/install-hooks.ts',
+    'scripts/uninstall-hooks.ts',
+    'scripts/hooks-state.ts',
   ]) {
     await copyFile(join(root, file), join(repo, file))
   }
@@ -74,7 +74,7 @@ async function fixture(t, install = true) {
     scripts: {
       'check:format': manifest.scripts['check:format'],
       'check:rust-format': manifest.scripts['check:rust-format'],
-      verify: 'node verify.mjs',
+      verify: 'node verify.ts',
     },
   })
   await writeFile(join(repo, '.gitignore'), 'node_modules\n/target\n.husky/_/\n')
@@ -86,9 +86,9 @@ async function fixture(t, install = true) {
   )
   await mkdir(join(repo, 'src'))
   await writeFile(join(repo, 'src/main.rs'), 'fn main() {}\n')
-  await writeFile(join(repo, 'partial.js'), 'const initial = 0\n')
+  await writeFile(join(repo, 'partial.ts'), 'const initial = 0\n')
   await writeFile(
-    join(repo, 'verify.mjs'),
+    join(repo, 'verify.ts'),
     "import { writeFileSync } from 'node:fs'\nwriteFileSync('verify-ran', 'yes')\nprocess.exit(Number(process.env.TEST_VERIFY_EXIT ?? 0))\n",
   )
   git(repo, ['add', '.'])
@@ -105,7 +105,7 @@ async function fixture(t, install = true) {
     'fixture',
   ])
   if (install) {
-    const result = run(process.execPath, ['scripts/install-hooks.mjs'], repo)
+    const result = run(process.execPath, ['scripts/install-hooks.ts'], repo)
     assert.equal(result.status, 0, result.stderr || result.stdout)
     assert.equal(git(repo, ['config', '--get', 'core.hooksPath']).trim(), '.husky/_')
     assert.match(await readFile(join(repo, '.husky/_/pre-commit'), 'utf8'), /\/h/)
@@ -116,7 +116,7 @@ async function fixture(t, install = true) {
 
 test('hooks accept nested, Unicode, spaced, and shell-sensitive filenames', async (t) => {
   const repo = await fixture(t)
-  const files = ['nested/路径 with spaces.js', '[literal].js', "quote's.js", '$(echo quoted).js']
+  const files = ['nested/路径 with spaces.ts', '[literal].ts', "quote's.ts", '$(echo quoted).ts']
   await mkdir(join(repo, 'nested'))
   for (const file of files) await writeFile(join(repo, file), 'const value = 1\n')
   git(repo, ['add', '--', ...files])
@@ -131,15 +131,15 @@ test('invalid staged content is rejected and both versions of a partial file are
   const repo = await fixture(t)
   const staged = 'const value={a:1}\n'
   const working = 'const value = { a: 1 }\n'
-  await writeFile(join(repo, 'partial.js'), staged)
-  git(repo, ['add', 'partial.js'])
-  await writeFile(join(repo, 'partial.js'), working)
+  await writeFile(join(repo, 'partial.ts'), staged)
+  git(repo, ['add', 'partial.ts'])
+  await writeFile(join(repo, 'partial.ts'), working)
   const stashes = git(repo, ['stash', 'list'])
   const result = run('git', ['hook', 'run', 'pre-commit'], repo)
   assert.notEqual(result.status, 0)
   assert.match(result.stdout + result.stderr, /prettier --check/)
-  assert.equal(git(repo, ['show', ':partial.js']), staged)
-  assert.equal(await readFile(join(repo, 'partial.js'), 'utf8'), working)
+  assert.equal(git(repo, ['show', ':partial.ts']), staged)
+  assert.equal(await readFile(join(repo, 'partial.ts'), 'utf8'), working)
   assert.equal(git(repo, ['stash', 'list']), stashes)
 })
 
@@ -147,14 +147,14 @@ test('valid staged content passes without including unformatted unstaged edits',
   const repo = await fixture(t)
   const staged = 'const value = { a: 1 }\n'
   const working = 'const value={a:2}\n'
-  await writeFile(join(repo, 'partial.js'), staged)
-  git(repo, ['add', 'partial.js'])
-  await writeFile(join(repo, 'partial.js'), working)
+  await writeFile(join(repo, 'partial.ts'), staged)
+  git(repo, ['add', 'partial.ts'])
+  await writeFile(join(repo, 'partial.ts'), working)
   const stashes = git(repo, ['stash', 'list'])
   const result = run('git', ['hook', 'run', 'pre-commit'], repo)
   assert.equal(result.status, 0, result.stderr || result.stdout)
-  assert.equal(git(repo, ['show', ':partial.js']), staged)
-  assert.equal(await readFile(join(repo, 'partial.js'), 'utf8'), working)
+  assert.equal(git(repo, ['show', ':partial.ts']), staged)
+  assert.equal(await readFile(join(repo, 'partial.ts'), 'utf8'), working)
   assert.equal(git(repo, ['stash', 'list']), stashes)
 })
 
@@ -186,13 +186,13 @@ test('installation is repeatable and preserves custom hook paths', async (t) => 
   const hook = join(repo, '.husky/pre-commit')
   const original = (await readFile(hook, 'utf8')) + '\n# preserve tracked hook\n'
   await writeFile(hook, original)
-  let result = run(process.execPath, ['scripts/install-hooks.mjs'], repo)
+  let result = run(process.execPath, ['scripts/install-hooks.ts'], repo)
   assert.equal(result.status, 0, result.stderr || result.stdout)
   assert.equal(await readFile(hook, 'utf8'), original)
   git(repo, ['config', 'core.hooksPath', '.custom-hooks'])
   await mkdir(join(repo, '.custom-hooks'))
   await writeFile(join(repo, '.custom-hooks/pre-commit'), '# custom hook\n')
-  result = run(process.execPath, ['scripts/install-hooks.mjs'], repo)
+  result = run(process.execPath, ['scripts/install-hooks.ts'], repo)
   assert.equal(result.status, 0, result.stderr || result.stdout)
   assert.match(result.stdout, /core\.hooksPath preserved/)
   assert.equal(git(repo, ['config', '--get', 'core.hooksPath']).trim(), '.custom-hooks')
@@ -218,7 +218,7 @@ test(
     assert.equal(converted.status, 0, converted.stderr || converted.stdout)
     const alias = converted.stdout.trim()
     if (alias.toLowerCase() === repo.toLowerCase()) return t.skip('Windows short names are disabled')
-    const installed = run(process.execPath, [join(alias, 'scripts/install-hooks.mjs')], alias)
+    const installed = run(process.execPath, [join(alias, 'scripts/install-hooks.ts')], alias)
     assert.equal(installed.status, 0, installed.stderr || installed.stdout)
     assert.equal(git(repo, ['config', '--get', 'core.hooksPath']).trim(), '.husky/_')
     assert.match(await readFile(join(repo, '.husky/_/h'), 'utf8'), /husky/)
@@ -231,32 +231,32 @@ test(
 test('CI and HUSKY=0 skip installation; nested source copies leave parent hooks alone', async (t) => {
   const repo = await fixture(t, false)
   for (const override of [{ CI: 'true' }, { HUSKY: '0' }, { NODE_ENV: 'production' }]) {
-    const result = run(process.execPath, ['scripts/install-hooks.mjs'], repo, {
+    const result = run(process.execPath, ['scripts/install-hooks.ts'], repo, {
       ...environment(repo),
       ...override,
     })
     assert.equal(result.status, 0, result.stderr || result.stdout)
     assert.equal(run('git', ['config', '--get', 'core.hooksPath'], repo).status, 1)
   }
-  const result = run(process.execPath, ['scripts/install-hooks.mjs'], repo)
+  const result = run(process.execPath, ['scripts/install-hooks.ts'], repo)
   assert.equal(result.status, 0, result.stderr || result.stdout)
   const before = await readFile(join(repo, '.husky/_/h'), 'utf8')
   const nested = join(repo, 'nested copy')
   await mkdir(join(nested, 'scripts'), { recursive: true })
-  await copyFile(join(root, 'scripts/install-hooks.mjs'), join(nested, 'scripts/install-hooks.mjs'))
-  await copyFile(join(root, 'scripts/hooks-state.mjs'), join(nested, 'scripts/hooks-state.mjs'))
-  const copy = run(process.execPath, ['scripts/install-hooks.mjs'], nested)
+  await copyFile(join(root, 'scripts/install-hooks.ts'), join(nested, 'scripts/install-hooks.ts'))
+  await copyFile(join(root, 'scripts/hooks-state.ts'), join(nested, 'scripts/hooks-state.ts'))
+  const copy = run(process.execPath, ['scripts/install-hooks.ts'], nested)
   assert.equal(copy.status, 0, copy.stderr || copy.stdout)
   assert.equal(await readFile(join(repo, '.husky/_/h'), 'utf8'), before)
   assert.equal(git(repo, ['config', '--get', 'core.hooksPath']).trim(), '.husky/_')
 })
 
-async function missing(path) {
+async function missing(path: string) {
   await assert.rejects(lstat(path), { code: 'ENOENT' })
 }
 
-function uninstall(repo, env = environment(repo)) {
-  const result = run(process.execPath, ['scripts/uninstall-hooks.mjs'], repo, env)
+function uninstall(repo: string, env: NodeJS.ProcessEnv = environment(repo)) {
+  const result = run(process.execPath, ['scripts/uninstall-hooks.ts'], repo, env)
   assert.equal(result.status, 0, result.stderr || result.stdout)
   return result
 }
@@ -266,10 +266,10 @@ test('uninstall restores default Git hooks and can be repeated before reinstalli
   const source = await readFile(join(repo, '.husky/pre-commit'), 'utf8')
   await mkdir(join(repo, '.git/hooks'), { recursive: true })
   const defaultHook = join(repo, '.git/hooks/pre-commit')
-  await writeFile(defaultHook, '#!/bin/sh\nnode default-hook.mjs\n')
+  await writeFile(defaultHook, '#!/bin/sh\nnode default-hook.ts\n')
   await chmod(defaultHook, 0o755)
   await writeFile(
-    join(repo, 'default-hook.mjs'),
+    join(repo, 'default-hook.ts'),
     "import { writeFileSync } from 'node:fs'\nwriteFileSync('default-hook-ran', 'yes')\n",
   )
 
@@ -282,11 +282,11 @@ test('uninstall restores default Git hooks and can be repeated before reinstalli
   assert.equal(await readFile(join(repo, 'default-hook-ran'), 'utf8'), 'yes')
   uninstall(repo)
 
-  const reinstalled = run(process.execPath, ['scripts/install-hooks.mjs'], repo)
+  const reinstalled = run(process.execPath, ['scripts/install-hooks.ts'], repo)
   assert.equal(reinstalled.status, 0, reinstalled.stderr || reinstalled.stdout)
   assert.equal(git(repo, ['config', '--get', 'core.hooksPath']).trim(), '.husky/_')
   assert.match(await readFile(join(repo, '.husky/_/h'), 'utf8'), /husky/)
-  assert.equal(await readFile(defaultHook, 'utf8'), '#!/bin/sh\nnode default-hook.mjs\n')
+  assert.equal(await readFile(defaultHook, 'utf8'), '#!/bin/sh\nnode default-hook.ts\n')
 })
 
 test('uninstall preserves changed files, unknown files, and a replacement hook manager', async (t) => {
@@ -306,6 +306,7 @@ test('uninstall preserves changed files, unknown files, and a replacement hook m
 test('uninstall never changes global or included Git configuration', async (t) => {
   const repo = await fixture(t)
   const globalFile = environment(repo).GIT_CONFIG_GLOBAL
+  assert.ok(globalFile)
   await mkdir(join(repo, '.test-config'), { recursive: true })
   const globalContent = '[core]\n\thooksPath = global-hooks\n'
   await writeFile(globalFile, globalContent)
@@ -327,7 +328,7 @@ test('prepare cleans up a removed Husky dependency without loading node_modules'
   delete config.devDependencies.husky
   await writeJson(path, config)
   await unlink(join(repo, 'node_modules'))
-  const prepared = run(process.execPath, ['scripts/install-hooks.mjs'], repo)
+  const prepared = run(process.execPath, ['scripts/install-hooks.ts'], repo)
   assert.equal(prepared.status, 0, prepared.stderr || prepared.stdout)
   await missing(join(repo, '.husky/_'))
   assert.equal(run('git', ['config', '--local', '--get', 'core.hooksPath'], repo).status, 1)
@@ -340,7 +341,7 @@ test('uninstall rejects redirected directories and invalid ownership records bef
   const original = await readFile(record, 'utf8')
   await writeFile(join(repo, 'keep.txt'), 'outside generated directory\n')
   await writeJson(record, { version: 1, files: { '../../keep.txt': '0'.repeat(64) } })
-  let result = run(process.execPath, ['scripts/uninstall-hooks.mjs'], repo)
+  let result = run(process.execPath, ['scripts/uninstall-hooks.ts'], repo)
   assert.notEqual(result.status, 0)
   assert.equal(git(repo, ['config', '--get', 'core.hooksPath']).trim(), '.husky/_')
   assert.equal(await readFile(join(repo, 'keep.txt'), 'utf8'), 'outside generated directory\n')
@@ -352,7 +353,7 @@ test('uninstall rejects redirected directories and invalid ownership records bef
   await writeFile(join(external, 'h'), 'do not delete\n')
   await symlink(external, join(repo, '.husky/_'), process.platform === 'win32' ? 'junction' : 'dir')
   git(repo, ['config', 'core.hooksPath', '.husky/_'])
-  result = run(process.execPath, ['scripts/uninstall-hooks.mjs'], repo)
+  result = run(process.execPath, ['scripts/uninstall-hooks.ts'], repo)
   assert.notEqual(result.status, 0)
   assert.equal(git(repo, ['config', '--get', 'core.hooksPath']).trim(), '.husky/_')
   assert.equal(await readFile(join(external, 'h'), 'utf8'), 'do not delete\n')
@@ -367,7 +368,7 @@ test('shared Git hook configuration remains until the last active worktree unins
     join(linked, 'node_modules'),
     process.platform === 'win32' ? 'junction' : 'dir',
   )
-  const installed = run(process.execPath, ['scripts/install-hooks.mjs'], linked)
+  const installed = run(process.execPath, ['scripts/install-hooks.ts'], linked)
   assert.equal(installed.status, 0, installed.stderr || installed.stdout)
   const before = await readFile(join(linked, '.husky/_/h'), 'utf8')
   uninstall(repo)

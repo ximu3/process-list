@@ -18,7 +18,7 @@ for (const processes of [
 }
 const expected = process.argv[2]
 if (expected === 'error') {
-  const verify = (error) => {
+  const verify = (error: unknown) => {
     assert.ok(error instanceof ProcessQueryError)
     assert.equal(error.operation, 'getForeground')
     assert.equal(error.code, 'ERR_PROCESS_QUERY_FAILED')

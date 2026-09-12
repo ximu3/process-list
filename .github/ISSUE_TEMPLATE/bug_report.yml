@@ -1,0 +1,36 @@
+name: Bug report / 问题反馈
+description: Report an installation, process query, or foreground detection problem. / 反馈安装、进程查询或前台识别问题。
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior / 预期与实际行为
+      description: Describe what you expected and what happened. / 说明期望的结果和实际发生的情况。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction / 复现方式
+      description: Provide minimal code or steps. For intermittent problems, describe when they occur. / 提供最小代码或复现步骤；偶发问题请描述出现条件。
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment / 运行环境
+      description: Include Linux libc and desktop details when relevant. / 涉及 Linux 时，请补充 libc 和桌面环境。
+      placeholder: |
+        process-list version:
+        OS and version:
+        Architecture (x64 / ARM64):
+        Node.js / Electron version:
+        Linux libc (glibc / musl) and desktop (X11 / Wayland / headless):
+    validations:
+      required: true
+  - type: textarea
+    id: errors
+    attributes:
+      label: Relevant error output / 相关错误输出
+      description: Include the error code, operation, and cause if available. / 如有错误，请提供 code、operation 和 cause。
+      render: text

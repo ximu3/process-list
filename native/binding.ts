@@ -1,7 +1,10 @@
 import { createRequire } from 'node:module'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { currentTarget } from './targets.js'
+import { currentTarget } from './targets.ts'
+import type * as Addon from './addon.js'
+
+export type { NativeProcess, NativeForeground } from './addon.js'
 
 const require = createRequire(import.meta.url)
 const { name, version } = require('../package.json')
@@ -9,8 +12,7 @@ const target = currentTarget()
 const packageName = `${name}-${target.suffix}`
 const localBinary = new URL(`./process-list.${target.suffix}.node`, import.meta.url)
 
-/** @returns {typeof import('./binding.d.ts')} */
-function load() {
+function load(): typeof Addon {
   try {
     if (existsSync(localBinary)) return require(fileURLToPath(localBinary))
     const installed = require(`${packageName}/package.json`)

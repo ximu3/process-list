@@ -38,13 +38,14 @@ jobs:
       - id: release
         env:
           RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-        run: node scripts/validate-release.mjs
+        run: node scripts/validate-release.ts
 
   verify:
     needs: metadata
     uses: ./.github/workflows/verify.yml
     with:
       ref: ${{ needs.metadata.outputs.sha }}
+      full: true
 
   npm:
     needs: [metadata, verify]
@@ -69,11 +70,15 @@ jobs:
           pattern: native-*
           path: artifacts
           merge-multiple: true
-      - run: node scripts/assemble.mjs
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: library
+          path: .
+      - run: node scripts/assemble.ts
       - name: Publish native packages, then the main package
         env:
           NPM_DIST_TAG: ${{ needs.metadata.outputs.dist_tag }}
-        run: node scripts/publish.mjs
+        run: node scripts/publish.ts
 
   release:
     needs: [metadata, npm]
